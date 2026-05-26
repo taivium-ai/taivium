@@ -1,0 +1,7 @@
+{
+  "include": ["src", "tests", "examples"],
+  "extraPaths": ["src", "examples"],
+  "typeCheckingMode": "basic",
+  "reportMissingImports": true,
+  "reportMissingModuleSource": false
+}

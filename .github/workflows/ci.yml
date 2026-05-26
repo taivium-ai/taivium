@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "develop"]
+  pull_request:
+
+jobs:
+  ci:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-test.txt
+          pip install coverage
+          # Install CPU-only torch to keep CI fast
+          pip install torch==$(grep -oP '(?<=torch==)\S+' requirements.txt) \
+            --index-url https://download.pytorch.org/whl/cpu --force-reinstall
+
+      - name: Pylint
+        run: python -m pylint ./src --fail-under=8.0
+
+      - name: Run tests with coverage
+        run: |
+          python -m coverage run -m pytest tests/ -q
+          python -m coverage report \
+            --include="src/tarvium/*" \
+            --show-missing \
+            --fail-under=90
+
+      - name: Upload coverage artifact
+        if: matrix.python-version == '3.13'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: .coverage

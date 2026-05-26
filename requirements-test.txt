@@ -1,0 +1,8 @@
+# requirements-test.txt
+#
+# This file lists only the packages needed for testing.
+pytest==8.4.2
+pytest-watch==4.2.0
+pylint==3.0.0
+# Redis test double (no real Redis server needed in tests)
+fakeredis>=2.0.0
