@@ -22,24 +22,41 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          # cache: pip
-      # --- SET UP RUST TOOLCHAIN FOR LEGACY TOKENIZERS COMPATIBILITY ---
+
+      # --- RUST TOOLCHAIN SETUP ---
       - name: Set up older Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.70.0
 
+      # --- PIP & WHEEL CACHING ---
+      - name: Get Pip Cache Dir
+        id: pip-cache
+        run: |
+          echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache Pip Packages and Wheels
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.pip-cache.outputs.dir }}
+            ~/.cache/pip
+          # Unique key based on OS, Python version, and dependency files
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements.txt', 'requirements-test.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ matrix.python-version }}-
+
+      # --- INSTALL DEPENDENCIES ---
       - name: Install dependencies
         env:
-          # This tells the Rust compiler to ALLOW the legacy pointer casting
           RUSTFLAGS: "-A invalid_reference_casting"
         run: |
-          pip install --upgrade pip setuptools wheel
+          python -m pip install --upgrade pip setuptools wheel
           # Install CPU-only torch to keep CI fast
           pip install torch==$(grep -oP '(?<=torch==)\S+' requirements.txt) \
-            --index-url https://download.pytorch.org/whl/cpu --force-reinstall
+            --index-url https://download.pytorch.org/whl/cpu
           pip install click
-          pip install -r requirements.txt -r requirements-test.txt --force-reinstall
+          pip install -r requirements.txt -r requirements-test.txt
           pip install coverage
 
       - name: Pylint
