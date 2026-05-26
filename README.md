@@ -360,6 +360,12 @@ engine.py
 
 ---
 
+## Documentation
+
+See design document in [docs/](docs/) for detailed architecture, design decisions, and implementation details.
+
+---
+
 ## Examples
 
 See the [`examples/`](examples/) folder for runnable end-to-end scripts:

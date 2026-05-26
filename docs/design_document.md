@@ -669,17 +669,7 @@ Datasets:
 
 ---
 
-## 11. Out of Scope (MVP)
-
-* SOC2 automation
-* dashboards
-* multi-region infra
-* RBAC
-* advanced agent orchestration
-
----
-
-## 12. Success Criteria
+## 11. Success Criteria
 
 * <10 min integration
 * consistent anonymization
@@ -689,6 +679,6 @@ Datasets:
 
 ---
 
-## 13. Key Insight
+## 12. Key Insight
 
 A deterministic semantic privacy transformation engine that enforces privacy boundaries while preserving LLM utility.
