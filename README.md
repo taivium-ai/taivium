@@ -346,15 +346,6 @@ result = pipeline.process(text)
 
 Tarvium is a single Python package. All detection, identity resolution, policy enforcement, and transformation run inside `Tarvium` — no external engine required.
 
-```
-Privata Cloud  (policies + audit dashboard — planned)
-      │
- ─────┼──────────────────────────────
-      │              │
-  Tarvium    Privata Gateway        ← you are here
-  (this SDK)   (OpenAI-compatible proxy — planned)
-```
-
 Everything in the pipeline runs in-process:
 
 ```
@@ -388,14 +379,6 @@ Contributions are welcome.
 2. Create a feature branch
 3. Add tests — all changes require test coverage
 4. Submit a pull request with a clear description
-
-```bash
-# Run tests
-pytest
-
-# Run with file-watch
-ptw --ext=.py
-```
 
 ---
 
