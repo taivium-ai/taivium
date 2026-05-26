@@ -2,7 +2,7 @@
 import os
 from typing import Any, Dict, List, Optional
 
-from tarvium.client import PrivacyClient
+from taivium.client import PrivacyClient
 
 # pylint: disable=invalid-name
 
@@ -20,7 +20,7 @@ def run_basic_client_example(
     """Run the basic PrivacyClient usage example.
 
     Demonstrates:
-    - Creating a :class:`~tarvium.client.PrivacyClient` (or accepting an
+    - Creating a :class:`~taivium.client.PrivacyClient` (or accepting an
       injected one for testing)
     - Making a de-identified chat completion call with ``deid_response=True``
     - Inspecting the session mapping to see which entities were anonymised

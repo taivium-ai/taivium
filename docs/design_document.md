@@ -1,10 +1,10 @@
-# Tarvium — Software Design Document
+# Taivium — Software Design Document
 
 ## 1. Introduction
 
 ### 1.1 Purpose
 
-Tarvium is a middleware system that protects sensitive data (PII, secrets, and internal business entities) before it reaches Large Language Models (LLMs), while preserving semantic meaning and downstream model utility.
+Taivium is a middleware system that protects sensitive data (PII, secrets, and internal business entities) before it reaches Large Language Models (LLMs), while preserving semantic meaning and downstream model utility.
 
 It provides:
 
@@ -106,12 +106,12 @@ Client App
 
 ### 3.1 SDK Layer (`PrivacyClient`)
 
-`PrivacyClient` is an OpenAI-compatible drop-in client implemented in `src/tarvium/client.py`. It de-identifies every outgoing message through `Tarvium` before the request leaves the process, and optionally reverses entity tokens in the LLM response.
+`PrivacyClient` is an OpenAI-compatible drop-in client implemented in `src/taivium/client.py`. It de-identifies every outgoing message through `Taivium` before the request leaves the process, and optionally reverses entity tokens in the LLM response.
 
 #### Responsibilities
 
 * Intercept `chat.completions.create()` calls
-* Run each string `content` field through `Tarvium.process()`
+* Run each string `content` field through `Taivium.process()`
 * Persist the entity mapping via the pipeline's `session_store` (in-memory or Redis)
 * Optionally reverse-map tokens in the response (`deid_response=True`)
 * Forward all other kwargs unchanged to the underlying `openai.OpenAI` client
@@ -119,7 +119,7 @@ Client App
 #### Public API
 
 ```python
-from tarvium import PrivacyClient
+from taivium import PrivacyClient
 
 # Default: in-memory session store
 client = PrivacyClient(api_key="sk-...")
@@ -411,7 +411,7 @@ class PolicyDecision:
     reason: PolicyDecisionReason  # why this rule was selected
 ```
 
-`PolicyDecision` is immutable and is stored alongside the entity and its ID in `Tarvium.process()` as a `(Entity, str, PolicyDecision)` triple — ensuring the action, risk, and reason are always co-located with the entity they describe.
+`PolicyDecision` is immutable and is stored alongside the entity and its ID in `Taivium.process()` as a `(Entity, str, PolicyDecision)` triple — ensuring the action, risk, and reason are always co-located with the entity they describe.
 
 ##### Custom Policy
 
@@ -429,7 +429,7 @@ Maps detected entities to deterministic, collision-resistant IDs.
 By default, entity IDs are globally stable: the same entity text and label always produce the same anonymized token (e.g., `PERSON_abcdef123456`).
 This enables consistent anonymization across documents and sessions, but also allows cross-document and cross-tenant linkage of identical entities.
 
-**Tarvium now supports privacy-preserving deployments via two new options:**
+**Taivium now supports privacy-preserving deployments via two new options:**
 
 - `id_salt`: An optional salt (string) that scopes entity IDs to a tenant, session, or namespace. When set, identical entities in different tenants/sessions will receive different anonymized IDs, preventing cross-tenant or cross-session linkage.
 - `id_hash_len`: The number of hex digits to use from the hash (default 12 for legacy compatibility). Longer hashes increase collision resistance; shorter hashes may be used for more compact tokens.
@@ -438,19 +438,19 @@ This enables consistent anonymization across documents and sessions, but also al
 
 ```python
 # Default (global, legacy-stable IDs; not privacy-preserving)
-engine = Tarvium()
+engine = Taivium()
 
 # Tenant-scoped IDs (prevents cross-tenant linkage)
-engine = Tarvium(id_salt="tenant_1234")
+engine = Taivium(id_salt="tenant_1234")
 
 # Session-scoped IDs (prevents cross-session linkage)
-engine = Tarvium(id_salt="session_5678")
+engine = Taivium(id_salt="session_5678")
 
 # Custom hash length (longer IDs)
-engine = Tarvium(id_hash_len=24)
+engine = Taivium(id_hash_len=24)
 
 # Both salt and custom hash length
-engine = Tarvium(id_salt="tenant_1234", id_hash_len=24)
+engine = Taivium(id_salt="tenant_1234", id_hash_len=24)
 ```
 
 **Privacy Implications:**
@@ -461,7 +461,7 @@ engine = Tarvium(id_salt="tenant_1234", id_hash_len=24)
 
 **Best practice:** Always set a unique salt per tenant or session in regulated or multi-tenant environments to prevent cross-tenant or cross-session linkage of anonymized IDs.
 
-See the `Tarvium` class docstring in `src/tarvium/engine.py` for more details and usage patterns.
+See the `Taivium` class docstring in `src/taivium/engine.py` for more details and usage patterns.
 
 **ID generation key:** `(label, normalize_identity_text(text))` — purely semantic. The same entity text and label always produce the same token, regardless of position.
 
@@ -490,18 +490,18 @@ Stores anonymization state:
 | In-memory (default) | `InMemorySessionStore` | Within-process lifetime only | Development, single-process apps |
 | Redis | `RedisSessionStore` | Cross-call, cross-process, configurable TTL | Production, multi-instance, long-lived sessions |
 
-`RedisSessionStore` namespaces keys as `tarvium:session:<session_id>:<entity_id>` and stores metadata as JSON. Enum and tuple values are serialized to JSON-safe types on write.
+`RedisSessionStore` namespaces keys as `taivium:session:<session_id>:<entity_id>` and stores metadata as JSON. Enum and tuple values are serialized to JSON-safe types on write.
 
 ```python
-from tarvium.session_store import RedisSessionStore
-from tarvium import Tarvium
+from taivium.session_store import RedisSessionStore
+from taivium import Taivium
 
 store = RedisSessionStore(
     session_id="user-abc123",
     redis_url="redis://localhost:6379",
     ttl=3600,
 )
-pipeline = Tarvium(session_store=store)
+pipeline = Taivium(session_store=store)
 ```
 
 #### Hashing Standard
@@ -559,7 +559,7 @@ If no salt is provided, entity IDs are globally stable and can be linked across 
 
 ### Transformer and LLM Detection Layers
 
-Both layers are fully implemented and opt-in. `transformer_evidence()` uses `dslim/bert-base-NER` via HuggingFace `transformers`; `llm_evidence()` uses `gpt-4o-mini` via the OpenAI API. Enable them with `use_transformer=True` and `use_llm=True` on `Tarvium`. All layers run additively — each adds to the evidence pool; `canonicalize_spans()` resolves conflicts.
+Both layers are fully implemented and opt-in. `transformer_evidence()` uses `dslim/bert-base-NER` via HuggingFace `transformers`; `llm_evidence()` uses `gpt-4o-mini` via the OpenAI API. Enable them with `use_transformer=True` and `use_llm=True` on `Taivium`. All layers run additively — each adds to the evidence pool; `canonicalize_spans()` resolves conflicts.
 
 ### Regex Confidence Calibration
 
@@ -567,8 +567,17 @@ Regex detectors now use calibrated confidence values (email: 0.90, phone: 0.80, 
 
 ### spaCy Model Load Time
 
+
 The spaCy model is lazy-loaded on the first call to `PrivacyPipeline.process()`. The first call incurs a one-time startup cost (typically ~300–400 ms) while the model is loaded into memory. All subsequent calls run in ~10–20 ms. The model is loaded with unused pipeline components disabled (`tagger`, `parser`, `lemmatizer`, `attribute_ruler`) to minimise inference latency.
-The measurement is done on a typical development machine (Macbook Pro M2; actual load times may vary based on hardware and environment).
+
+**Testing Environment:**
+- Macbook Pro M2 (Apple Silicon)
+- 16GB RAM, macOS Ventura 13.x
+
+**Text Used for Testing:**
+tests/long_text_1426_words.txt (1 426 words, 8 500 characters, multiple mentions of names, emails, orgs, and phones)
+
+The measurement is done on the above environment and text (actual load times may vary based on hardware and environment).
 
 ### Latency History Cap
 

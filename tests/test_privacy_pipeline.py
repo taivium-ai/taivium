@@ -1,14 +1,14 @@
-"""Tests for the evidence-first Tarvium flow."""
+"""Tests for the evidence-first Taivium flow."""
 
 import unicodedata
 
 import pytest
 
-from tarvium.engine import (
+from taivium.engine import (
     Evidence,
     Entity,
     IdentityEngine,
-    Tarvium,
+    Taivium,
     assert_text_span_integrity,
     canonicalize_spans,
     find_recurrences,
@@ -16,7 +16,7 @@ from tarvium.engine import (
     transform,
     assert_non_overlapping,
 )
-from tarvium.session_store import InMemorySessionStore
+from taivium.session_store import InMemorySessionStore
 
 
 def test_transform_raises_on_overlapping_spans() -> None:
@@ -44,7 +44,7 @@ def test_collect_evidence_calls_all_detectors(monkeypatch: pytest.MonkeyPatch) -
     """The evidence collector must invoke all detector layers."""
     calls = {"spacy": 0, "regex": 0, "transformer": 0, "llm": 0}
 
-    import tarvium.engine as pp  # pylint: disable=import-outside-toplevel
+    import taivium.engine as pp  # pylint: disable=import-outside-toplevel
 
     def _spacy(_: str):
         calls["spacy"] += 1
@@ -233,7 +233,7 @@ def test_identityengine_normalizes_unicode_forms() -> None:
 
 def test_pipeline_process_uses_canonical_entities(monkeypatch: pytest.MonkeyPatch) -> None:
     """End-to-end process should consume canonical entities and emit deterministic mapping."""
-    import tarvium.engine as pp  # pylint: disable=import-outside-toplevel
+    import taivium.engine as pp  # pylint: disable=import-outside-toplevel
 
     def _collect(_: str, **kwargs):
         return [
@@ -242,7 +242,7 @@ def test_pipeline_process_uses_canonical_entities(monkeypatch: pytest.MonkeyPatc
         ]
 
     monkeypatch.setattr(pp, "collect_evidence", _collect)
-    pipeline = Tarvium()
+    pipeline = Taivium()
     output = pipeline.process("Alice")
 
     assert output["entities"][0]["label"] == "PERSON"
@@ -386,14 +386,14 @@ def test_find_recurrences_multiple_occurrences() -> None:
 
 def test_pipeline_recurrence_replaces_all_mentions(monkeypatch: pytest.MonkeyPatch) -> None:
     """Integration: both occurrences of an eligible person name are anonymized."""
-    import tarvium.engine as pp  # pylint: disable=import-outside-toplevel
+    import taivium.engine as pp  # pylint: disable=import-outside-toplevel
 
     def _collect(_: str, **kwargs) -> list:
         # spaCy only detects the first full name
         return [Evidence(0, 13, "PERSON", "spacy", 0.75)]
 
     monkeypatch.setattr(pp, "collect_evidence", _collect)
-    pipeline = Tarvium()
+    pipeline = Taivium()
     output = pipeline.process("Alice Johnson met Alice Johnson.")
 
     assert "Alice Johnson" not in output["anonymized"]
@@ -546,14 +546,14 @@ def test_transform_reverse_transform_roundtrip():
 
 def test_process_result_contains_store_type_key() -> None:
     """process() result must include a 'store_type' key."""
-    pipeline = Tarvium()
+    pipeline = Taivium()
     result = pipeline.process("Alice Johnson works here.")
     assert "store_type" in result
 
 
 def test_process_store_type_default_is_inmemory() -> None:
     """Default pipeline uses InMemorySessionStore, reflected in store_type."""
-    pipeline = Tarvium()
+    pipeline = Taivium()
     result = pipeline.process("Alice Johnson works here.")
     assert result["store_type"] == "InMemorySessionStore"
 
@@ -561,6 +561,6 @@ def test_process_store_type_default_is_inmemory() -> None:
 def test_process_store_type_reflects_custom_store() -> None:
     """When a custom session store is injected, store_type matches its class name."""
     store = InMemorySessionStore()
-    pipeline = Tarvium(session_store=store)
+    pipeline = Taivium(session_store=store)
     result = pipeline.process("Bob Smith is here.")
     assert result["store_type"] == "InMemorySessionStore"

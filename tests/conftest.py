@@ -1,4 +1,4 @@
-"""Pytest configuration and shared fixtures for the Tarvium test suite."""
+"""Pytest configuration and shared fixtures for the Taivium test suite."""
 import os
 from pathlib import Path
 

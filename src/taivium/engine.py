@@ -25,7 +25,7 @@ from .transformer import transformer_evidence
 from .session_store import InMemorySessionStore, SessionStore
 from .llm import llm_evidence
 
-logger = logging.getLogger("tarvium.engine")
+logger = logging.getLogger("taivium.engine")
 
 # -----------------------------
 # Policy Action and Risk Level Enums
@@ -783,7 +783,7 @@ def reverse_transform(text: str, mapping: Dict[str, Dict[str, Any]]) -> str:
     """Reverses anonymization by replacing every entity ID token in *text*
     with the original value from *mapping*.
 
-    *mapping* is the ``"mapping"`` dict returned by ``Tarvium.process()``:
+    *mapping* is the ``"mapping"`` dict returned by ``Taivium.process()``:
     ``{eid: {"text": <original>, "label": ..., ...}}``.
 
     Replacement is applied longest-token-first to avoid partial matches
@@ -918,9 +918,9 @@ class PolicyEngine:
         return decision
 
 
-class Tarvium:  # pylint: disable=too-many-instance-attributes
+class Taivium:  # pylint: disable=too-many-instance-attributes
     """
-    Tarvium orchestrates the end-to-end semantic identity transformation process.
+    Taivium orchestrates the end-to-end semantic identity transformation process.
     It detects entities in text, normalizes and resolves overlaps, assigns deterministic IDs,
     and transforms the text by replacing sensitive entities with anonymized placeholders.
 
@@ -931,7 +931,7 @@ class Tarvium:  # pylint: disable=too-many-instance-attributes
         session_store (SessionStore, optional):
             Pluggable session store for persisting entity-ID → metadata mappings
             across pipeline calls.  Defaults to ``InMemorySessionStore`` (in-process
-            only).  Any object satisfying the :class:`~tarvium.session_store.SessionStore`
+            only).  Any object satisfying the :class:`~taivium.session_store.SessionStore`
             protocol is accepted (``RedisSessionStore``, custom backends, etc.).
         id_salt (str, optional):
             Optional salt to scope entity IDs to a tenant, session, or namespace. 
@@ -941,19 +941,19 @@ class Tarvium:  # pylint: disable=too-many-instance-attributes
 
     Usage Examples:
         # Default (global, legacy-stable IDs)
-        engine = Tarvium()
+        engine = Taivium()
 
         # Tenant-scoped IDs (prevents cross-tenant linkage)
-        engine = Tarvium(id_salt="tenant_1234")
+        engine = Taivium(id_salt="tenant_1234")
 
         # Session-scoped IDs (prevents cross-session linkage)
-        engine = Tarvium(id_salt="session_5678")
+        engine = Taivium(id_salt="session_5678")
 
         # Custom hash length (longer IDs)
-        engine = Tarvium(id_hash_len=24)
+        engine = Taivium(id_hash_len=24)
 
         # Both salt and custom hash length
-        engine = Tarvium(id_salt="tenant_1234", id_hash_len=24)
+        engine = Taivium(id_salt="tenant_1234", id_hash_len=24)
     """
 
     def __init__(

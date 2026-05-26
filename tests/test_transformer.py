@@ -2,8 +2,8 @@
 import sys
 import pytest
 
-import tarvium.transformer as tr
-from tarvium.engine import Evidence
+import taivium.transformer as tr
+from taivium.engine import Evidence
 
 
 # ---------------------------------------------------------------------------

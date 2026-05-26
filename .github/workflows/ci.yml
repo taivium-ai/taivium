@@ -40,7 +40,7 @@ jobs:
         run: |
           python -m coverage run -m pytest tests/ -q
           python -m coverage report \
-            --include="src/tarvium/*" \
+            --include="src/taivium/*" \
             --show-missing \
             --fail-under=90
 

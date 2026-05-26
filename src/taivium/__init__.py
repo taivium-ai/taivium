@@ -1,12 +1,12 @@
 """
-Tarvium — Privacy-preserving de-identification SDK
+Taivium — Privacy-preserving de-identification SDK
 ------------------------------------------------------
 Drop-in OpenAI-compatible client that de-identifies sensitive data
 before it reaches any LLM endpoint.
 
 Quickstart::
 
-    from tarvium import PrivacyClient
+    from taivium import PrivacyClient
 
     client = PrivacyClient(api_key="sk-...")
     response = client.chat.completions.create(
@@ -16,7 +16,7 @@ Quickstart::
 
 For custom policies::
 
-    from tarvium import PrivacyClient, PolicyEngine, PolicyRule, PolicyAction, RiskLevel
+    from taivium import PrivacyClient, PolicyEngine, PolicyRule, PolicyAction, RiskLevel
 
     policy = PolicyEngine(policy_table={
         "PERSON":   PolicyRule("PERSON",   PolicyAction.ANONYMIZE, RiskLevel.HIGH),
@@ -29,7 +29,7 @@ For custom policies::
 from .client import PrivacyClient
 from .engine import (Entity, Evidence, PolicyAction, PolicyDecision,
                                PolicyContext, PolicyDecisionReason, PolicyEngine, PolicyRule,
-                               Tarvium, RiskLevel, find_recurrences, recurrence_evidence,
+                               Taivium, RiskLevel, find_recurrences, recurrence_evidence,
                                reverse_transform)
 from .session_store import InMemorySessionStore, RedisSessionStore, SessionStore
 
@@ -37,7 +37,7 @@ __all__ = [
     # High-level SDK entry point
     "PrivacyClient",
     # Core pipeline (usable standalone, without the OpenAI wrapper)
-    "Tarvium",
+    "Taivium",
     # Policy primitives
     "PolicyEngine",
     "PolicyRule",

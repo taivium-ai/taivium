@@ -16,7 +16,7 @@ import logging
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, List
 
-logger = logging.getLogger("tarvium.transformer")
+logger = logging.getLogger("taivium.transformer")
 
 if TYPE_CHECKING:
     from .engine import Evidence
@@ -89,7 +89,7 @@ def transformer_evidence(text: str) -> List[Evidence]:
         text: The input text to run NER over.
 
     Returns:
-        A list of :class:`~tarvium.engine.Evidence` records with
+        A list of :class:`~taivium.engine.Evidence` records with
         ``source="transformer"``.
     """
     # Deferred import to avoid circular dependency with engine.py.

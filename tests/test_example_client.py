@@ -20,11 +20,11 @@ from example_client import (  # pylint: disable=import-error
     EXAMPLE_MESSAGES,
     run_basic_client_example,
 )
-from tarvium.client import (  # pyright: ignore[reportPrivateImportUsage]
+from taivium.client import (  # pyright: ignore[reportPrivateImportUsage]
     PrivacyClient,
     _PrivacyChat,
 )
-from tarvium.engine import Tarvium
+from taivium.engine import Taivium
 
 # pylint: disable=protected-access,too-few-public-methods,duplicate-code
 
@@ -62,7 +62,7 @@ def _make_example_client(
     """Return a PrivacyClient wired to a fake OpenAI backend."""
     fake_chat = _FakeChat(response_content)
     client = object.__new__(PrivacyClient)
-    client._pipeline = Tarvium()
+    client._pipeline = Taivium()
     client.chat = _PrivacyChat(fake_chat, client._pipeline)
     return client, fake_chat.completions
 
@@ -157,7 +157,7 @@ class TestRunBasicClientExample:
         replaced with the original values before the response is returned.
         """
         # First pass: process the text to discover the token ID for "John Doe"
-        pipeline = Tarvium()
+        pipeline = Taivium()
         processed = pipeline.process(EXAMPLE_MESSAGES[0]["content"])
         person_token = next(
             (eid for eid, v in processed["mapping"].items() if v["label"] == "PERSON"),

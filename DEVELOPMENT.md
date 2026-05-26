@@ -3,10 +3,10 @@
 ## Project Structure
 
 ```
-Tarvium/
+Taivium/
 ├── src/
-│   └── tarvium/
-│       ├── __init__.py           # Public SDK exports (PrivacyClient, Tarvium, …)
+│   └── taivium/
+│       ├── __init__.py           # Public SDK exports (PrivacyClient, Taivium, …)
 │       ├── client.py             # PrivacyClient — OpenAI-compatible drop-in wrapper
 │       ├── engine.py             # Core privacy engine (detection, policy, anonymization)
 │       └── session_store.py      # Pluggable session identity stores (InMemory / Redis)
@@ -52,12 +52,12 @@ python -m spacy download en_core_web_sm
 PYTHONPATH=src pytest tests/
 ```
 
-> `PYTHONPATH=src` is required so that `import tarvium` resolves to `src/tarvium/`.
+> `PYTHONPATH=src` is required so that `import taivium` resolves to `src/taivium/`.
 > This value is also set in the `.env` file, which `tests/conftest.py` loads automatically.
 
 ## Core Pipeline Flow
 
-`Tarvium.process()` follows this sequence:
+`Taivium.process()` follows this sequence:
 
 1. Collect detector evidence (`spacy_evidence`, `regex_evidence` [calibrated confidence], `transformer_evidence`, `llm_evidence`)
 2. Canonicalize spans (`canonicalize_spans`) — sweep-line overlap-cluster grouping produces one canonical entity per non-overlapping cluster via weighted label vote and longest-span selection
@@ -68,7 +68,7 @@ PYTHONPATH=src pytest tests/
 6. Transform text (`transform`)
 
 
-`Tarvium.process()` follows this sequence:
+`Taivium.process()` follows this sequence:
 
 1. Collect detector evidence (`spacy_evidence`, `regex_evidence` [calibrated confidence], `transformer_evidence`, `llm_evidence`)
 2. Canonicalize spans (`canonicalize_spans`) — sweep-line overlap-cluster grouping produces one canonical entity per non-overlapping cluster via weighted label vote and longest-span selection
@@ -86,15 +86,15 @@ The pipeline's `session_store` persists the `entity_id → metadata` mapping acr
 
 ```python
 # Default (in-memory, within-process only)
-pipeline = Tarvium()
+pipeline = Taivium()
 
 # Redis-backed (cross-call, cross-process)
-from tarvium.session_store import RedisSessionStore
+from taivium.session_store import RedisSessionStore
 store = RedisSessionStore(session_id="user-abc123", redis_url="redis://localhost:6379")
-pipeline = Tarvium(session_store=store)
+pipeline = Taivium(session_store=store)
 
 # Via PrivacyClient
-from tarvium import PrivacyClient
+from taivium import PrivacyClient
 client = PrivacyClient(
     api_key="sk-...",
     session_id="user-abc123",
@@ -107,27 +107,27 @@ The pipeline's `session_store` persists the `entity_id → metadata` mapping acr
 
 ```python
 # Default (global, legacy-stable IDs; not privacy-preserving)
-pipeline = Tarvium()
+pipeline = Taivium()
 
 # Tenant-scoped IDs (prevents cross-tenant linkage)
-pipeline = Tarvium(id_salt="tenant_1234")
+pipeline = Taivium(id_salt="tenant_1234")
 
 # Session-scoped IDs (prevents cross-session linkage)
-pipeline = Tarvium(id_salt="session_5678")
+pipeline = Taivium(id_salt="session_5678")
 
 # Custom hash length (longer IDs)
-pipeline = Tarvium(id_hash_len=24)
+pipeline = Taivium(id_hash_len=24)
 
 # Both salt and custom hash length
-pipeline = Tarvium(id_salt="tenant_1234", id_hash_len=24)
+pipeline = Taivium(id_salt="tenant_1234", id_hash_len=24)
 
 # Redis-backed (cross-call, cross-process)
-from tarvium.session_store import RedisSessionStore
+from taivium.session_store import RedisSessionStore
 store = RedisSessionStore(session_id="user-abc123", redis_url="redis://localhost:6379")
-pipeline = Tarvium(session_store=store)
+pipeline = Taivium(session_store=store)
 
 # Via PrivacyClient
-from tarvium import PrivacyClient
+from taivium import PrivacyClient
 client = PrivacyClient(
   api_key="sk-...",
   session_id="user-abc123",

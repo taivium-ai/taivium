@@ -1,20 +1,20 @@
 import pytest
-from tarvium.engine import Tarvium, reverse_transform
+from taivium.engine import Taivium, reverse_transform
 
 def test_id_salt_scoping():
     text = "Alice and Bob are friends. Alice's email is alice@example.com."
     # Global (legacy) IDs
-    engine_global = Tarvium()
+    engine_global = Taivium()
     result_global = engine_global.process(text)
     ids_global = {e['id'] for e in result_global['entities']}
 
     # Tenant-scoped IDs
-    engine_tenant = Tarvium(id_salt="tenantA")
+    engine_tenant = Taivium(id_salt="tenantA")
     result_tenant = engine_tenant.process(text)
     ids_tenant = {e['id'] for e in result_tenant['entities']}
 
     # Session-scoped IDs
-    engine_session = Tarvium(id_salt="sessionB")
+    engine_session = Taivium(id_salt="sessionB")
     result_session = engine_session.process(text)
     ids_session = {e['id'] for e in result_session['entities']}
 
@@ -30,8 +30,8 @@ def test_id_salt_scoping():
 
 def test_id_hash_len():
     text = "Charlie works at Acme Corp."
-    engine_short = Tarvium(id_hash_len=8)
-    engine_long = Tarvium(id_hash_len=32)
+    engine_short = Taivium(id_hash_len=8)
+    engine_long = Taivium(id_hash_len=32)
     result_short = engine_short.process(text)
     result_long = engine_long.process(text)
     ids_short = [e['id'] for e in result_short['entities']]

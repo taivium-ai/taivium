@@ -1,17 +1,17 @@
-""" Example usage of Tarvium """
+""" Example usage of Taivium """
 
 from pprint import pprint
 from typing import Any, Dict, List
 
-from tarvium.engine import (
+from taivium.engine import (
     Evidence,
     PolicyAction,
     PolicyEngine,
     PolicyRule,
-    Tarvium,
+    Taivium,
     RiskLevel,
 )
-from tarvium.session_store import RedisSessionStore
+from taivium.session_store import RedisSessionStore
 
 # pylint: disable=invalid-name
 
@@ -38,7 +38,7 @@ def run_section1_default_pipeline(
     text: str = EXAMPLE_TEXT,
     verbose: bool = True,
 ) -> Dict[str, Any]:
-    """Run the default Tarvium and return the process() result.
+    """Run the default Taivium and return the process() result.
 
     Args:
         text: Input text to process. Defaults to the shared example text.
@@ -58,7 +58,7 @@ def run_section1_default_pipeline(
                                     'text': 'Alice Johnson', ...}, ...},
          'original':  '\\nAlice Johnson from Acme Corp ...'}
     """
-    pipeline = Tarvium()
+    pipeline = Taivium()
     result = pipeline.process(text)
     if verbose:
         pprint(result)
@@ -100,7 +100,7 @@ def run_section2_custom_policy(
         "API_KEY": PolicyRule("API_KEY", PolicyAction.BLOCK, RiskLevel.CRITICAL),
         "LOCATION": PolicyRule("LOCATION", PolicyAction.ALLOW, RiskLevel.LOW),
     }
-    pipeline = Tarvium(policy_engine=PolicyEngine(policy_table=custom_policy))
+    pipeline = Taivium(policy_engine=PolicyEngine(policy_table=custom_policy))
     result = pipeline.process(text)
     if verbose:
         pprint(result)
@@ -150,7 +150,7 @@ def run_section3_redis_session(
         redis_url=redis_url,
         ttl=3600,
     )
-    pipeline = Tarvium(session_store=store)
+    pipeline = Taivium(session_store=store)
     result = pipeline.process(text)
     if verbose:
         pprint(result)
@@ -218,7 +218,7 @@ def run_section4_transformer_and_llm(
     """
     import os  # pylint: disable=import-outside-toplevel
 
-    pipeline = Tarvium(use_transformer=use_transformer, use_llm=use_llm)
+    pipeline = Taivium(use_transformer=use_transformer, use_llm=use_llm)
     result = pipeline.process(text)
 
     if verbose:
@@ -304,7 +304,7 @@ def run_section5_custom_detectors(
 ) -> Dict[str, Any]:
     """Run the pipeline with custom transformer and LLM detector callables.
 
-    Demonstrates passing ``transformer_fn`` and ``llm_fn`` to :class:`Tarvium`
+    Demonstrates passing ``transformer_fn`` and ``llm_fn`` to :class:`Taivium`
     to replace the built-in detectors with any callable that accepts a ``str``
     and returns ``List[Evidence]``.  Useful for swapping in different NER models,
     routing LLM calls to a private endpoint, or writing deterministic stubs for
@@ -324,7 +324,7 @@ def run_section5_custom_detectors(
     """
     text = "Agent X and Agent Y joined Horizon AI for the briefing."
 
-    pipeline = Tarvium(
+    pipeline = Taivium(
         use_transformer=True,
         transformer_fn=_custom_transformer_detector,
         use_llm=True,

@@ -3,7 +3,7 @@
 Covers:
 - InMemorySessionStore: get/set/set_many/get_all/clear
 - RedisSessionStore: same interface via fakeredis (no real Redis required)
-- Tarvium.session_store integration: mapping is persisted per call
+- Taivium.session_store integration: mapping is persisted per call
 - Enum/tuple serialization round-trip for Redis store
 - Cross-call identity persistence: same entity_id across separate process() calls
 - reset_session (clear) removes all entries
@@ -15,8 +15,8 @@ from typing import Any, Dict
 
 import pytest
 
-from tarvium.engine import Tarvium
-from tarvium.session_store import InMemorySessionStore, RedisSessionStore, _serialize_metadata
+from taivium.engine import Taivium
+from taivium.session_store import InMemorySessionStore, RedisSessionStore, _serialize_metadata
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +87,7 @@ class TestSerializeMetadata:
     """Tests for the _serialize_metadata helper."""
     def test_enum_is_serialized_to_value(self) -> None:
         """Enum values are stored as their .value strings."""
-        from tarvium.engine import PolicyAction, RiskLevel  # pylint: disable=import-outside-toplevel
+        from taivium.engine import PolicyAction, RiskLevel  # pylint: disable=import-outside-toplevel
         meta = {"action": PolicyAction.ANONYMIZE, "risk": RiskLevel.HIGH}
         result = _serialize_metadata(meta)
         assert result["action"] == "anonymize"
@@ -140,7 +140,7 @@ class TestRedisSessionStore:
 
     def test_enum_values_round_trip(self, redis_store: RedisSessionStore) -> None:
         """Enum fields are serialized to their .value on write and returned as strings."""
-        from tarvium.engine import PolicyAction, RiskLevel  # pylint: disable=import-outside-toplevel
+        from taivium.engine import PolicyAction, RiskLevel  # pylint: disable=import-outside-toplevel
         redis_store.set("EMAIL_abc", {
             "text": "alice@acme.com",
             "action": PolicyAction.ANONYMIZE,
@@ -190,15 +190,15 @@ class TestRedisSessionStore:
 
 
 # ---------------------------------------------------------------------------
-# Tarvium + session store integration
+# Taivium + session store integration
 # ---------------------------------------------------------------------------
 
 class TestPipelineSessionStoreIntegration:
-    """Integration tests: Tarvium with session store backends."""
+    """Integration tests: Taivium with session store backends."""
     def test_process_saves_mapping_to_inmemory_store(self) -> None:
         """process() persists the call mapping to the session store."""
         store = InMemorySessionStore()
-        pipeline = Tarvium(session_store=store)
+        pipeline = Taivium(session_store=store)
         result = pipeline.process("alice@acme.com sent an email.")
         # The mapping returned by process() must match what's in the store.
         for eid, meta in result["mapping"].items():
@@ -209,7 +209,7 @@ class TestPipelineSessionStoreIntegration:
     def test_session_store_accumulates_across_calls(self) -> None:
         """Separate process() calls accumulate in the same store."""
         store = InMemorySessionStore()
-        pipeline = Tarvium(session_store=store)
+        pipeline = Taivium(session_store=store)
         pipeline.process("alice@acme.com sent an email.")
         pipeline.process("bob@acme.com replied.")
         all_entries = store.get_all()
@@ -218,8 +218,8 @@ class TestPipelineSessionStoreIntegration:
         assert "bob@acme.com" in texts
 
     def test_default_pipeline_uses_inmemory_store(self) -> None:
-        """Tarvium() with no store arg uses InMemorySessionStore."""
-        pipeline = Tarvium()
+        """Taivium() with no store arg uses InMemorySessionStore."""
+        pipeline = Taivium()
         assert isinstance(pipeline.session_store, InMemorySessionStore)
 
     def test_process_with_redis_store(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -231,7 +231,7 @@ class TestPipelineSessionStoreIntegration:
         monkeypatch.setattr(redis, "from_url", lambda *_a, **_kw: fake_client)
 
         store = RedisSessionStore(session_id="pipeline-test")
-        pipeline = Tarvium(session_store=store)
+        pipeline = Taivium(session_store=store)
         result = pipeline.process("alice@acme.com sent an email.")
 
         for eid in result["mapping"]:
@@ -240,7 +240,7 @@ class TestPipelineSessionStoreIntegration:
     def test_cross_call_identity_is_stable(self) -> None:
         """The same entity text maps to the same ID in both calls."""
         store = InMemorySessionStore()
-        pipeline = Tarvium(session_store=store)
+        pipeline = Taivium(session_store=store)
         r1 = pipeline.process("alice@acme.com sent an email.")
         r2 = pipeline.process("Reply from alice@acme.com.")
 

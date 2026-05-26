@@ -1,15 +1,15 @@
-# Tarvium
+# Taivium
 
 > **Privacy firewall for AI applications.**
 > Sensitive data in — safe prompts out — coherent responses back.
 
 Stop PII, secrets, and customer data from leaking into LLMs.  
-Tarvium sits between your app and any AI provider, automatically protecting every request — with zero prompt engineering and zero LLM quality loss.
+Taivium sits between your app and any AI provider, automatically protecting every request — with zero prompt engineering and zero LLM quality loss.
 
-[![CI](https://github.com/taivium-ai/tarvium/actions/workflows/ci.yml/badge.svg)](https://github.com/taivium-ai/tarvium/actions/workflows/ci.yml)
-[![Coverage](https://codecov.io/gh/taivium-ai/tarvium/branch/main/graph/badge.svg)](https://codecov.io/gh/taivium-ai/tarvium)
-[![PyPI version](https://img.shields.io/pypi/v/tarvium)](https://pypi.org/project/tarvium/)
-[![PyPI downloads](https://img.shields.io/pypi/dm/tarvium)](https://pypi.org/project/tarvium/)
+[![CI](https://github.com/taivium-ai/taivium/actions/workflows/ci.yml/badge.svg)](https://github.com/taivium-ai/taivium/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/taivium-ai/taivium/branch/main/graph/badge.svg)](https://codecov.io/gh/taivium-ai/taivium)
+[![PyPI version](https://img.shields.io/pypi/v/taivium)](https://pypi.org/project/taivium/)
+[![PyPI downloads](https://img.shields.io/pypi/dm/taivium)](https://pypi.org/project/taivium/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](#installation)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -26,14 +26,14 @@ Every AI call is a potential data leak.
 
 Standard redaction tools make it worse: replacing `Alice` and `Bob` with `[NAME]` and `[NAME]` destroys identity — your LLM can no longer reason about who is who.
 
-**Tarvium solves both problems at once.**
+**Taivium solves both problems at once.**
 
 ---
 
 ## How It Works
 
 ```
-Your App ──► Tarvium ──► LLM (OpenAI / Claude / local)
+Your App ──► Taivium ──► LLM (OpenAI / Claude / local)
                 │
     ┌───────────┴────────────┐
     │  Detection Layer       │  spaCy · regex · transformer · LLM
@@ -46,7 +46,7 @@ Your App ──► Tarvium ──► LLM (OpenAI / Claude / local)
     Restore original entities in LLM response (optional)
 ```
 
-Unlike dumb masking, Tarvium assigns **consistent pseudonymous tokens** across the entire session. `Alice Johnson` always becomes the same `PERSON_a1b2c3` — so your LLM can still reason coherently about identity across multi-turn conversations, RAG pipelines, and agent workflows.
+Unlike dumb masking, Taivium assigns **consistent pseudonymous tokens** across the entire session. `Alice Johnson` always becomes the same `PERSON_a1b2c3` — so your LLM can still reason coherently about identity across multi-turn conversations, RAG pipelines, and agent workflows.
 
 **Full AI quality. Zero data exposure.**
 
@@ -55,13 +55,13 @@ Unlike dumb masking, Tarvium assigns **consistent pseudonymous tokens** across t
 ## Installation
 
 ```bash
-pip install tarvium
+pip install taivium
 ```
 
 Redis support (optional, for cross-session persistence):
 
 ```bash
-pip install tarvium[redis]
+pip install taivium[redis]
 ```
 
 ---
@@ -73,7 +73,7 @@ pip install tarvium[redis]
 Two lines change. Everything else stays the same.
 
 ```python
-from tarvium.client import PrivacyClient
+from taivium.client import PrivacyClient
 import os
 
 client = PrivacyClient(api_key=os.environ["OPENAI_API_KEY"])
@@ -94,9 +94,9 @@ print(response.choices[0].message.content)
 ### Sanitize text directly
 
 ```python
-from tarvium.engine import Tarvium
+from taivium.engine import Taivium
 
-pipeline = Tarvium()
+pipeline = Taivium()
 result = pipeline.process(
     "Alice Johnson from Acme Corp emailed alice@acme.com. "
     "Her API key is sk-1234567890abcdef."
@@ -117,11 +117,11 @@ The same entity always maps to the same token — coherent AI reasoning, guarant
 Block certain entity types outright. Allow others through unchanged.
 
 ```python
-from tarvium.engine import (
-    Tarvium, PolicyEngine, PolicyRule, PolicyAction, RiskLevel
+from taivium.engine import (
+    Taivium, PolicyEngine, PolicyRule, PolicyAction, RiskLevel
 )
 
-pipeline = Tarvium(
+pipeline = Taivium(
     policy_engine=PolicyEngine(policy_table={
         "API_KEY":  PolicyRule("API_KEY",  PolicyAction.BLOCK,     RiskLevel.CRITICAL),
         "LOCATION": PolicyRule("LOCATION", PolicyAction.ALLOW,     RiskLevel.LOW),
@@ -139,15 +139,15 @@ except ValueError as e:
 Keep the same pseudonymous tokens across restarts, workers, and long-running sessions.
 
 ```python
-from tarvium.engine import Tarvium
-from tarvium.session_store import RedisSessionStore
+from taivium.engine import Taivium
+from taivium.session_store import RedisSessionStore
 
 store = RedisSessionStore(
     session_id="user-abc123",
     redis_url="redis://localhost:6379",
     ttl=3600,
 )
-pipeline = Tarvium(session_store=store)
+pipeline = Taivium(session_store=store)
 
 r1 = pipeline.process("Alice Johnson sent a report.")
 r2 = pipeline.process("Alice Johnson followed up.")
@@ -168,11 +168,11 @@ Two extra detection layers can be enabled on top of the default spaCy + regex
 detectors. Both are **opt-in** and degrade gracefully when unavailable.
 
 ```python
-from tarvium.engine import Tarvium
+from taivium.engine import Taivium
 
 # Transformer layer — requires: pip install transformers torch
 # Uses dslim/bert-base-NER (BERT fine-tuned on CoNLL-2003).
-pipeline = Tarvium(use_transformer=True)
+pipeline = Taivium(use_transformer=True)
 
 result = pipeline.process(
     "Dr. Emily Clarke joined Horizon AI in Boston. "
@@ -198,7 +198,7 @@ import os
 os.environ["OPENAI_API_KEY"] = "sk-..."
 
 # Both layers active — broadest detection coverage
-pipeline = Tarvium(use_transformer=True, use_llm=True)
+pipeline = Taivium(use_transformer=True, use_llm=True)
 result = pipeline.process("...")
 ```
 
@@ -214,7 +214,7 @@ callable that accepts a `str` and returns `List[Evidence]`. The `use_transformer
 / `use_llm` flag must still be `True` for the layer to run.
 
 ```python
-from tarvium.engine import Evidence, Tarvium
+from taivium.engine import Evidence, Taivium
 
 def my_ner(text: str) -> list[Evidence]:
     """Drop-in replacement — use any model, API, or rule set."""
@@ -225,7 +225,7 @@ def my_ner(text: str) -> list[Evidence]:
     return [Evidence(start=idx, end=idx + 7, label="PERSON",
                      source="transformer", confidence=0.95)]
 
-pipeline = Tarvium(use_transformer=True, transformer_fn=my_ner)
+pipeline = Taivium(use_transformer=True, transformer_fn=my_ner)
 result = pipeline.process("Agent X joined the briefing.")
 # → "PERSON_... joined the briefing."
 ```
@@ -292,7 +292,7 @@ confidence = (0.75 + 1.00) / 2 = 0.875  →  rounded to 0.87 in display
 
 ## Why Not Simple Redaction?
 
-| | Simple redaction | Tarvium |
+| | Simple redaction | Taivium |
 |---|---|---|
 | Input | `John emailed Mary` | `John emailed Mary` |
 | To LLM | `[NAME] emailed [NAME]` | `PERSON_a1b2 emailed PERSON_c3d4` |
@@ -344,7 +344,7 @@ result = pipeline.process(text)
 
 ## Architecture
 
-Tarvium is a single Python package. All detection, identity resolution, policy enforcement, and transformation run inside `Tarvium` — no external engine required.
+Taivium is a single Python package. All detection, identity resolution, policy enforcement, and transformation run inside `Taivium` — no external engine required.
 
 Everything in the pipeline runs in-process:
 

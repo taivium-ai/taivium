@@ -3,7 +3,7 @@ LLM-assisted NER evidence collector.
 --------------------------------------
 Uses the OpenAI chat completions API (``gpt-4o-mini`` by default) to extract
 named entities from text.  The detector is opt-in: it only runs when
-``use_llm=True`` is passed to :class:`~tarvium.engine.Tarvium` and an
+``use_llm=True`` is passed to :class:`~taivium.engine.Taivium` and an
 ``OPENAI_API_KEY`` environment variable is set.
 
 Model override::
@@ -22,7 +22,7 @@ from collections.abc import Callable  # pylint: disable=import-error
 
 # Logging system
 import logging
-logger = logging.getLogger("tarvium.llm")
+logger = logging.getLogger("taivium.llm")
 
 
 # Only warn once per process about missing API key (no global)
@@ -131,7 +131,7 @@ def llm_evidence(text: str) -> List[Evidence]:
         text: The input text to run entity extraction over.
 
     Returns:
-        A list of :class:`~tarvium.engine.Evidence` records with
+        A list of :class:`~taivium.engine.Evidence` records with
         ``source="llm"``.
     """
     # Deferred import to avoid circular dependency with engine.py.

@@ -22,14 +22,14 @@ from example_privacy_pipeline import (  # pylint: disable=import-error
     run_section4_transformer_and_llm,
     run_section5_custom_detectors,
 )
-from tarvium.engine import (
+from taivium.engine import (
     PolicyAction,
     PolicyEngine,
     PolicyRule,
-    Tarvium,
+    Taivium,
     RiskLevel,
 )
-from tarvium.session_store import InMemorySessionStore
+from taivium.session_store import InMemorySessionStore
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@ class TestSection2CustomPolicyEngine:
         custom_policy = {
             "EMAIL": PolicyRule("EMAIL", PolicyAction.ALLOW, RiskLevel.LOW),
         }
-        pipeline = Tarvium(policy_engine=PolicyEngine(policy_table=custom_policy))
+        pipeline = Taivium(policy_engine=PolicyEngine(policy_table=custom_policy))
         text = "Contact alice@example.com for details."
         result = pipeline.process(text)
         assert "alice@example.com" in result["anonymized"]
@@ -162,7 +162,7 @@ class TestSection2CustomPolicyEngine:
         custom_policy = {
             "EMAIL": PolicyRule("EMAIL", PolicyAction.ALLOW, RiskLevel.LOW),
         }
-        pipeline = Tarvium(policy_engine=PolicyEngine(policy_table=custom_policy))
+        pipeline = Taivium(policy_engine=PolicyEngine(policy_table=custom_policy))
         text = "Alice Johnson emailed alice@example.com."
         result = pipeline.process(text)
         # EMAIL is explicitly ALLOW — appears verbatim
@@ -187,7 +187,7 @@ class TestSection3SessionPersistence:
     def test_same_entity_gets_same_id_across_calls(self):
         """The same entity text maps to the same placeholder ID across repeated process() calls."""
         store = InMemorySessionStore()
-        pipeline = Tarvium(session_store=store)
+        pipeline = Taivium(session_store=store)
 
         text1 = "Alice Johnson sent an email."
         text2 = "Alice Johnson called back."
@@ -208,7 +208,7 @@ class TestSection3SessionPersistence:
     def test_session_store_accumulates_mappings(self):
         """Entities from multiple process() calls all appear in session_store.get_all()."""
         store = InMemorySessionStore()
-        pipeline = Tarvium(session_store=store)
+        pipeline = Taivium(session_store=store)
 
         pipeline.process("Alice Johnson works here.")
         pipeline.process("Contact alice@example.com.")
@@ -219,9 +219,9 @@ class TestSection3SessionPersistence:
         assert "EMAIL" in labels
 
     def test_pipeline_accepts_session_store_kwarg(self):
-        """Tarvium accepts a session_store keyword argument without error."""
+        """Taivium accepts a session_store keyword argument without error."""
         store = InMemorySessionStore()
-        pipeline = Tarvium(session_store=store)
+        pipeline = Taivium(session_store=store)
         result = pipeline.process("Bob Smith is here.")
         assert result["anonymized"] is not None
 
@@ -272,7 +272,7 @@ class TestSection4TransformerAndLlm:
     @staticmethod
     def _mock_transformer(monkeypatch, predictions: list):
         """Patch _get_ner_pipeline to return a mock callable."""
-        import tarvium.transformer as tr  # pylint: disable=import-outside-toplevel
+        import taivium.transformer as tr  # pylint: disable=import-outside-toplevel
         tr._get_ner_pipeline.cache_clear()
         monkeypatch.setattr(tr, "_get_ner_pipeline", lambda: (lambda text, **kw: predictions))
 
@@ -416,10 +416,10 @@ class TestSection5CustomDetectors:
 
         def _det(text: str):
             calls.append(text)
-            from tarvium.engine import Evidence  # pylint: disable=import-outside-toplevel
+            from taivium.engine import Evidence  # pylint: disable=import-outside-toplevel
             return [Evidence(start=0, end=7, label="PERSON", source="transformer", confidence=0.99)]
 
-        pipeline = Tarvium(use_transformer=True, transformer_fn=_det)
+        pipeline = Taivium(use_transformer=True, transformer_fn=_det)
         result = pipeline.process("Agent X joined Horizon AI.")
         assert len(calls) == 1
         person = next((e for e in result["entities"] if e["label"] == "PERSON"), None)
@@ -432,13 +432,13 @@ class TestSection5CustomDetectors:
 
         def _det(text: str):
             calls.append(text)
-            from tarvium.engine import Evidence  # pylint: disable=import-outside-toplevel
+            from taivium.engine import Evidence  # pylint: disable=import-outside-toplevel
             idx = text.find("Horizon AI")
             if idx == -1:
                 return []
             return [Evidence(start=idx, end=idx + 10, label="ORG", source="llm", confidence=0.92)]
 
-        pipeline = Tarvium(use_llm=True, llm_fn=_det)
+        pipeline = Taivium(use_llm=True, llm_fn=_det)
         result = pipeline.process("Agent X joined Horizon AI.")
         assert len(calls) == 1
         org = next((e for e in result["entities"] if "llm" in e["evidence_sources"]), None)
@@ -446,7 +446,7 @@ class TestSection5CustomDetectors:
 
     def test_transformer_fn_overrides_builtin(self):
         """Providing transformer_fn does not call the built-in transformer_evidence."""
-        import tarvium.transformer as tr  # pylint: disable=import-outside-toplevel
+        import taivium.transformer as tr  # pylint: disable=import-outside-toplevel
         tr._get_ner_pipeline.cache_clear()
 
         builtin_calls = []
@@ -465,7 +465,7 @@ class TestSection5CustomDetectors:
         # Temporarily patch the built-in to spy on it
         tr.transformer_evidence = _spy
         try:
-            pipeline = Tarvium(use_transformer=True, transformer_fn=_custom)
+            pipeline = Taivium(use_transformer=True, transformer_fn=_custom)
             pipeline.process("Alice works at Acme.")
         finally:
             tr.transformer_evidence = original
@@ -475,7 +475,7 @@ class TestSection5CustomDetectors:
 
     def test_llm_fn_overrides_builtin(self, monkeypatch):
         """Providing llm_fn does not call the built-in llm_evidence."""
-        import tarvium.llm as llm_mod  # pylint: disable=import-outside-toplevel
+        import taivium.llm as llm_mod  # pylint: disable=import-outside-toplevel
 
         builtin_calls = []
         monkeypatch.setattr(
@@ -484,7 +484,7 @@ class TestSection5CustomDetectors:
         )
 
         custom_calls = []
-        pipeline = Tarvium(use_llm=True, llm_fn=lambda text: custom_calls.append(text) or [])
+        pipeline = Taivium(use_llm=True, llm_fn=lambda text: custom_calls.append(text) or [])
         pipeline.process("Alice works at Acme.")
 
         assert len(custom_calls) == 1
@@ -493,20 +493,20 @@ class TestSection5CustomDetectors:
     def test_transformer_fn_without_use_transformer_flag(self):
         """transformer_fn is NOT called when use_transformer=False (default)."""
         called = []
-        pipeline = Tarvium(transformer_fn=lambda text: called.append(text) or [])
+        pipeline = Taivium(transformer_fn=lambda text: called.append(text) or [])
         pipeline.process("Test text.")
         assert len(called) == 0, "fn should be ignored when use_transformer=False"
 
     def test_llm_fn_without_use_llm_flag(self):
         """llm_fn is NOT called when use_llm=False (default)."""
         called = []
-        pipeline = Tarvium(llm_fn=lambda text: called.append(text) or [])
+        pipeline = Taivium(llm_fn=lambda text: called.append(text) or [])
         pipeline.process("Test text.")
         assert len(called) == 0, "fn should be ignored when use_llm=False"
 
     def test_custom_fn_confidence_blended(self):
         """Confidence is the mean of spaCy and custom detector scores."""
-        from tarvium.engine import Evidence  # pylint: disable=import-outside-toplevel
+        from taivium.engine import Evidence  # pylint: disable=import-outside-toplevel
 
         # spaCy will detect 'Alice Johnson' at 0.75; custom adds 1.0 on same span.
         def _det(text: str):
@@ -516,7 +516,7 @@ class TestSection5CustomDetectors:
             return [Evidence(start=idx, end=idx + 13, label="PERSON",
                              source="transformer", confidence=1.0)]
 
-        pipeline = Tarvium(use_transformer=True, transformer_fn=_det)
+        pipeline = Taivium(use_transformer=True, transformer_fn=_det)
         result = pipeline.process("Alice Johnson works here.")
         person = next(
             (e for e in result["entities"]

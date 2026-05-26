@@ -1,4 +1,4 @@
-from tarvium.engine import find_recurrences, Entity
+from taivium.engine import find_recurrences, Entity
 
 def test_recurrence_cap(monkeypatch):
     # Create a text with 2000 repeated 'aaaaa@aaaaa.com' substrings

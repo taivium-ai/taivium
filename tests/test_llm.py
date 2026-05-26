@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import tarvium.llm as llm_mod
-from tarvium.engine import Evidence
+import taivium.llm as llm_mod
+from taivium.engine import Evidence
 
 
 # ---------------------------------------------------------------------------

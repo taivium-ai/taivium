@@ -6,7 +6,7 @@ and optionally re-identifies entity tokens in the response.
 
 Typical usage::
 
-    from tarvium import PrivacyClient
+    from taivium import PrivacyClient
 
     client = PrivacyClient(api_key="sk-...")
 
@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from .engine import PolicyAction, PolicyEngine, Tarvium, reverse_transform
+from .engine import PolicyAction, PolicyEngine, Taivium, reverse_transform
 from .session_store import InMemorySessionStore, RedisSessionStore
 
 # pylint: disable=too-few-public-methods
@@ -39,7 +39,7 @@ class _PrivacyCompletions:
     def __init__(
         self,
         inner_completions: Any,
-        pipeline: Tarvium,
+        pipeline: Taivium,
     ) -> None:
         self._inner = inner_completions
         self._pipeline = pipeline
@@ -95,7 +95,7 @@ class _PrivacyChat:
     def __init__(
         self,
         inner_chat: Any,
-        pipeline: Tarvium,
+        pipeline: Taivium,
     ) -> None:
         self.completions = _PrivacyCompletions(
             inner_chat.completions, pipeline
@@ -116,7 +116,7 @@ class PrivacyClient:
 
     * ``policy_engine`` — optional :class:`PolicyEngine` instance to override
       the default de-identification policy.
-    * ``default_action`` — :class:`~tarvium.engine.PolicyAction`
+    * ``default_action`` — :class:`~taivium.engine.PolicyAction`
       applied to entity labels not covered by the policy table. Defaults to
       ``PolicyAction.ANONYMIZE`` (strict). Pass ``PolicyAction.ALLOW`` for
       permissive mode. Ignored if ``policy_engine`` is provided.
@@ -138,7 +138,7 @@ class PrivacyClient:
         client = openai.OpenAI(api_key="sk-...")
 
         # After
-        from tarvium import PrivacyClient
+        from taivium import PrivacyClient
         client = PrivacyClient(api_key="sk-...")
 
     Attributes:
@@ -181,7 +181,7 @@ class PrivacyClient:
 
         if policy_engine is None and default_action is not None:
             policy_engine = PolicyEngine(default_action=default_action)
-        self._pipeline = Tarvium(policy_engine=policy_engine, session_store=store)
+        self._pipeline = Taivium(policy_engine=policy_engine, session_store=store)
         self.chat = _PrivacyChat(self._inner.chat, self._pipeline)
 
     @property

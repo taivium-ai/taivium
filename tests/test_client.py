@@ -13,16 +13,16 @@ from unittest.mock import patch
 
 import pytest
 
-from tarvium.client import PrivacyClient, _patch_response_content
-from tarvium.engine import (
+from taivium.client import PrivacyClient, _patch_response_content
+from taivium.engine import (
     PolicyAction,
     PolicyEngine,
     PolicyRule,
-    Tarvium,
+    Taivium,
     RiskLevel,
     reverse_transform,
 )
-from tarvium.session_store import InMemorySessionStore
+from taivium.session_store import InMemorySessionStore
 
 
 # ---------------------------------------------------------------------------
@@ -66,13 +66,13 @@ def _make_client(
 ) -> tuple[PrivacyClient, _FakeCompletions]:
     """Returns a PrivacyClient wired to a fake OpenAI backend."""
     fake_openai = _FakeOpenAI(response_content)
-    with patch("tarvium.client.PrivacyClient.__init__", wraps=lambda self, **kw: None):
+    with patch("taivium.client.PrivacyClient.__init__", wraps=lambda self, **kw: None):
         pass  # not used — we build manually below
 
     # Build directly without going through openai import
     client = object.__new__(PrivacyClient)
-    client._pipeline = Tarvium(policy_engine=policy_engine, session_store=session_store)
-    from tarvium.client import _PrivacyChat  # pylint: disable=import-outside-toplevel
+    client._pipeline = Taivium(policy_engine=policy_engine, session_store=session_store)
+    from taivium.client import _PrivacyChat  # pylint: disable=import-outside-toplevel
     client.chat = _PrivacyChat(fake_openai.chat, client._pipeline)
     return client, fake_openai.chat.completions
 

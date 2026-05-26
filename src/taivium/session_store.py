@@ -10,14 +10,14 @@ Optional:  RedisSessionStore     — Redis-backed, survives restarts,
 
 Usage::
 
-    from tarvium.session_store import RedisSessionStore
-    from tarvium import Tarvium
+    from taivium.session_store import RedisSessionStore
+    from taivium import Taivium
 
     store = RedisSessionStore(session_id="user-abc123")
-    pipeline = Tarvium(session_store=store)
+    pipeline = Taivium(session_store=store)
 
     result = pipeline.process("Alice at alice@acme.com needs help.")
-    # mapping is persisted in Redis under key tarvium:session:user-abc123:*
+    # mapping is persisted in Redis under key taivium:session:user-abc123:*
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ class InMemorySessionStore:
     """Default in-process session store.
 
     Retains the accumulated entity-ID → metadata mapping for as long as the
-    store object is alive (i.e. the lifetime of ``Tarvium`` or
+    store object is alive (i.e. the lifetime of ``Taivium`` or
     ``PrivacyClient``).  No persistence across process restarts.
 
     This is the backward-compatible default used when no Redis URL is provided.
@@ -111,7 +111,7 @@ class RedisSessionStore:
 
     Every entry is stored as a JSON string under the key::
 
-        tarvium:session:<session_id>:<entity_id>
+        taivium:session:<session_id>:<entity_id>
 
     Entries expire after *ttl* seconds (default 24 h) to prevent unbounded
     growth.  Pass ``ttl=None`` to disable expiry.
@@ -136,7 +136,7 @@ class RedisSessionStore:
             redis_url="redis://localhost:6379",
             ttl=3600,
         )
-        pipeline = Tarvium(session_store=store)
+        pipeline = Taivium(session_store=store)
     """
 
     def __init__(
@@ -154,7 +154,7 @@ class RedisSessionStore:
             ) from exc
 
         self._client = redis.from_url(redis_url, decode_responses=True)
-        self._prefix = f"tarvium:session:{session_id}:"
+        self._prefix = f"taivium:session:{session_id}:"
         self._ttl = ttl
 
     # ------------------------------------------------------------------

@@ -1,17 +1,17 @@
-"""Tests for Tarvium requirements (detection, policy, identity, performance)."""
+"""Tests for Taivium requirements (detection, policy, identity, performance)."""
 # pylint: disable=import-outside-toplevel,redefined-outer-name,reimported,fixme,line-too-long
 import re
 import pytest
 
-from tarvium.engine import Tarvium
+from taivium.engine import Taivium
 
 # 5.2 Sensitive Data Detection
 
 def test_privacy_pipeline_all_labels():
-    """Test that the Tarvium detects and anonymizes all
+    """Test that the Taivium detects and anonymizes all
         expected entity types in a sample text."""
 
-    pipeline = Tarvium()
+    pipeline = Taivium()
     text = """
     Alice Johnson from Acme Corp emailed alice@acme.com.
     Her API key is sk-1234567890abcdef.
@@ -37,8 +37,8 @@ def test_privacy_pipeline_all_labels():
         assert not re.search(pat, result["anonymized"]), f"Sensitive pattern still present: {pat}"
 
 def test_privacy_pipeline_partial_labels():
-    """Test that the Tarvium can be configured to only anonymize specific entity types."""
-    from tarvium.engine import PolicyEngine, PolicyRule, PolicyAction, RiskLevel
+    """Test that the Taivium can be configured to only anonymize specific entity types."""
+    from taivium.engine import PolicyEngine, PolicyRule, PolicyAction, RiskLevel
     # Custom policy: only anonymize PERSON, EMAIL, API_KEY; allow others
     custom_policy = {
         "PERSON": PolicyRule("PERSON", PolicyAction.ANONYMIZE, RiskLevel.MEDIUM),
@@ -48,7 +48,7 @@ def test_privacy_pipeline_partial_labels():
         "LOCATION": PolicyRule("LOCATION", PolicyAction.ALLOW, RiskLevel.LOW),
         "PHONE": PolicyRule("PHONE", PolicyAction.ALLOW, RiskLevel.LOW),
     }
-    pipeline = Tarvium(policy_engine=PolicyEngine(custom_policy))
+    pipeline = Taivium(policy_engine=PolicyEngine(custom_policy))
     text = """
     Alice Johnson from Acme Corp emailed alice@acme.com.
     Her API key is sk-1234567890abcdef.
@@ -70,7 +70,7 @@ def test_privacy_pipeline_partial_labels():
 
 def test_privacy_pipeline_duplicate_person():
     """Test that multiple mentions of the same person are consistently anonymized to the same ID."""
-    pipeline = Tarvium()
+    pipeline = Taivium()
     text = "Here is Alice and Alice again"
     result = pipeline.process(text)
     person_entities = [e for e in result["entities"] if e["label"] == "PERSON"]
@@ -80,7 +80,7 @@ def test_privacy_pipeline_duplicate_person():
 def test_privacy_pipeline_person_whitespace_variants():
     """Test that mentions of the same person with different
         surrounding whitespace are treated as the same person."""
-    pipeline = Tarvium()
+    pipeline = Taivium()
     text = """Alice and Alice  and Alice   """
     result = pipeline.process(text)
     person_entities = [e for e in result["entities"] if e["label"] == "PERSON"]
@@ -91,7 +91,7 @@ def test_privacy_pipeline_person_whitespace_variants():
 def test_person_vs_location_collision():
     """Test that 'Alice' as a PERSON and 'Alice Springs'
     as a LOCATION are detected as separate entities without collision."""
-    pipeline = Tarvium()
+    pipeline = Taivium()
     text = "It is the truth that Alice visited Alice Springs"
     result = pipeline.process(text)
     # Collect entities by label
@@ -113,9 +113,9 @@ def test_person_vs_location_collision():
     ("Acme Corp invoice #12345", {"ORG"}),
 ])
 def test_sensitive_data_detection(text, expected_labels):
-    """Test that the Tarvium detects specific sensitive
+    """Test that the Taivium detects specific sensitive
     data patterns."""
-    pipeline = Tarvium()
+    pipeline = Taivium()
     result = pipeline.process(text)
     found_labels = {e["label"] for e in result["entities"]}
     print(result["entities"])
@@ -128,7 +128,7 @@ def test_sensitive_data_detection(text, expected_labels):
 def test_all_occurrences_are_replaced():
     """Test that all occurrences of the same entity text are replaced
     with the same anonymized ID."""
-    pipeline = Tarvium()
+    pipeline = Taivium()
 
     text = "Alice met Alice at Acme Corp."
     result = pipeline.process(text)
@@ -151,7 +151,7 @@ def test_all_occurrences_are_replaced():
 # 5.3 Semantic Anonymization (Deterministic Mapping)
 def test_deterministic_mapping():
     """Test that the same entity text is consistently mapped to the same anonymized ID."""
-    pipeline = Tarvium()
+    pipeline = Taivium()
     text = "Alice met Alice at Acme Corp."
     result = pipeline.process(text)
     ids = [e["id"] for e in result["entities"] if e["label"] == "PERSON"]
@@ -160,13 +160,13 @@ def test_deterministic_mapping():
 # 5.4 Policy Engine (Anonymize vs Block)
 def test_policy_engine_anonymize_and_block():
     """Test that the policy engine can be configured to only anonymize PERSON entities and block ORG entities."""
-    from tarvium.engine import PolicyEngine, PolicyRule, PolicyAction, RiskLevel
+    from taivium.engine import PolicyEngine, PolicyRule, PolicyAction, RiskLevel
     # Custom policy: only anonymize PERSON; block ORG
     custom_policy = {
         "PERSON": PolicyRule("PERSON", PolicyAction.ANONYMIZE, RiskLevel.MEDIUM),
         "ORG": PolicyRule("ORG", PolicyAction.BLOCK, RiskLevel.MEDIUM)
     }
-    pipeline = Tarvium(policy_engine=PolicyEngine(custom_policy))
+    pipeline = Taivium(policy_engine=PolicyEngine(custom_policy))
     text = "Alice from Acme Corp, email alice@example.com"
     # found_person = False
     found_org = False
@@ -186,12 +186,12 @@ def test_policy_engine_anonymize_and_block():
 
 def test_policy_engine_anonymize_test_default_policy_only_person():
     """Test that the policy engine can be configured to only anonymize PERSON entities and not block any text."""
-    from tarvium.engine import PolicyEngine, PolicyRule, PolicyAction, RiskLevel
+    from taivium.engine import PolicyEngine, PolicyRule, PolicyAction, RiskLevel
     # Custom policy: only anonymize PERSON; allow others
     custom_policy = {
         "PERSON": PolicyRule("PERSON", PolicyAction.ANONYMIZE, RiskLevel.MEDIUM),
     }
-    pipeline = Tarvium(policy_engine=PolicyEngine(custom_policy))
+    pipeline = Taivium(policy_engine=PolicyEngine(custom_policy))
     text = "Alice Ranger from Acme Corp, email alice@example.com"
     found_person = False
     found_org = False
@@ -209,13 +209,13 @@ def test_policy_engine_anonymize_test_default_policy_only_person():
 
 def test_policy_engine_anonymize_test_default_policy2_explicit_allow_org():
     """Test that the policy engine can be configured to only anonymize PERSON entities and not block any text."""
-    from tarvium.engine import PolicyEngine, PolicyRule, PolicyAction, RiskLevel
+    from taivium.engine import PolicyEngine, PolicyRule, PolicyAction, RiskLevel
     # Custom policy: only anonymize PERSON; allow others
     custom_policy = {
         "PERSON": PolicyRule("PERSON", PolicyAction.ANONYMIZE, RiskLevel.MEDIUM),
         "ORG": PolicyRule("ORG", PolicyAction.ALLOW, RiskLevel.LOW),
     }
-    pipeline = Tarvium(policy_engine=PolicyEngine(custom_policy))
+    pipeline = Taivium(policy_engine=PolicyEngine(custom_policy))
     text = "Alice Ranger from Acme Corp, email alice@example.com"
     found_person = False
     found_org = False
@@ -233,9 +233,9 @@ def test_policy_engine_anonymize_test_default_policy2_explicit_allow_org():
 
 def test_mapping_includes_source_risk_action():
     """Test that the mapping output includes source, risk, and action for each entity."""
-    from tarvium.engine import Tarvium, PolicyAction, RiskLevel
+    from taivium.engine import Taivium, PolicyAction, RiskLevel
     text = "Alice Johnson from Acme Corp emailed alice@acme.com. Her API key is sk-1234567890abcdef."
-    pipeline = Tarvium()
+    pipeline = Taivium()
     policy_decision = pipeline.process(text)
     mapping = policy_decision["mapping"]
     assert mapping, "Mapping should not be empty."
@@ -251,7 +251,7 @@ def test_mapping_includes_source_risk_action():
 
 def test_policy_engine_explicit_reason():
     """PolicyEngine assigns EXPLICIT reason for labels present in the policy table."""
-    from tarvium.engine import PolicyEngine, Entity, PolicyDecisionReason
+    from taivium.engine import PolicyEngine, Entity, PolicyDecisionReason
 
     engine = PolicyEngine()
 
@@ -269,7 +269,7 @@ def test_policy_engine_explicit_reason():
 
 def test_policy_engine_fallback_reason():
     """PolicyEngine assigns FALLBACK reason for labels absent from the policy table."""
-    from tarvium.engine import PolicyEngine, Entity, PolicyDecisionReason
+    from taivium.engine import PolicyEngine, Entity, PolicyDecisionReason
 
     engine = PolicyEngine()
 
@@ -288,7 +288,7 @@ def test_policy_engine_fallback_reason():
 
 def test_policy_engine_context_is_forward_compatible_label_only() -> None:
     """Optional policy context should not change current label-only outcomes."""
-    from tarvium.engine import (
+    from taivium.engine import (
         Entity,
         PolicyContext,
         PolicyDecisionReason,
@@ -321,9 +321,9 @@ def test_policy_engine_context_is_forward_compatible_label_only() -> None:
 
 def test_pipeline_mapping_contains_reason():
     """Each entry in the pipeline mapping includes the policy decision reason."""
-    from tarvium.engine import Tarvium, Entity
+    from taivium.engine import Taivium, Entity
 
-    pipeline = Tarvium()
+    pipeline = Taivium()
 
     # bypass detection entirely
     pipeline.identity.resolve = lambda x: [(Entity("ignored", "PERSON", 0, 7, "test"), "PERSON_1")]
@@ -334,7 +334,7 @@ def test_pipeline_mapping_contains_reason():
 
 def test_policy_engine_explicit_tags():
     """Test that the PolicyEngine assigns EXPLICIT reason for all known labels in DEFAULT_POLICY."""
-    from tarvium.engine import PolicyEngine, Entity, PolicyDecisionReason, DEFAULT_POLICY
+    from taivium.engine import PolicyEngine, Entity, PolicyDecisionReason, DEFAULT_POLICY
 
     engine = PolicyEngine()
 
@@ -353,7 +353,7 @@ def test_policy_engine_explicit_tags():
 
 def test_policy_engine_no_default_reason():
     """Test that the PolicyEngine never assigns FALLBACK as reason for known labels."""
-    from tarvium.engine import PolicyEngine, Entity, PolicyDecisionReason, DEFAULT_POLICY
+    from taivium.engine import PolicyEngine, Entity, PolicyDecisionReason, DEFAULT_POLICY
 
     engine = PolicyEngine()
 
@@ -384,8 +384,8 @@ def test_policy_engine_no_default_reason():
 
 # 6.1 Under-Detection (Conservative Mode)
 def test_under_detection_conservative():
-    """Tarvium does not falsely detect non-sensitive text as API_KEY."""
-    pipeline = Tarvium()
+    """Taivium does not falsely detect non-sensitive text as API_KEY."""
+    pipeline = Taivium()
     text = "My secret code is 12345."
     result = pipeline.process(text)
     # Should not detect as API_KEY, but test that nothing is falsely detected
@@ -394,7 +394,7 @@ def test_under_detection_conservative():
 
 def test_policy_engine_default_action_anonymize():
     """PolicyEngine with default_action=ANONYMIZE anonymizes unknown labels."""
-    from tarvium.engine import (
+    from taivium.engine import (
         Entity, PolicyAction, PolicyDecisionReason, PolicyEngine,
     )
 
@@ -408,7 +408,7 @@ def test_policy_engine_default_action_anonymize():
 
 def test_policy_engine_default_action_allow():
     """PolicyEngine with default_action=ALLOW passes unknown labels through."""
-    from tarvium.engine import (
+    from taivium.engine import (
         Entity, PolicyAction, PolicyDecisionReason, PolicyEngine,
     )
 
@@ -422,7 +422,7 @@ def test_policy_engine_default_action_allow():
 
 def test_policy_engine_default_action_does_not_affect_explicit_rules():
     """default_action must not override labels explicitly present in the policy table."""
-    from tarvium.engine import (
+    from taivium.engine import (
         Entity, PolicyAction, PolicyDecisionReason, PolicyEngine,
     )
 
@@ -437,7 +437,7 @@ def test_policy_engine_default_action_does_not_affect_explicit_rules():
 # 6.3 Entity Collision (Type-aware Hash)
 def test_entity_collision():
     """Test that different entity types do not collide in their anonymized IDs."""
-    pipeline = Tarvium()
+    pipeline = Taivium()
     text = "Alice and Acme Corp"
     result = pipeline.process(text)
     ids = {e["id"] for e in result["entities"]}
@@ -445,8 +445,8 @@ def test_entity_collision():
 
 # 10.2 Reliability (Deterministic Output)
 def test_deterministic_output():
-    """Test that the Tarvium produces deterministic output for the same input."""
-    pipeline = Tarvium()
+    """Test that the Taivium produces deterministic output for the same input."""
+    pipeline = Taivium()
     text = "Alice Johnson from Acme Corp"
     result1 = pipeline.process(text)
     result2 = pipeline.process(text)
@@ -454,7 +454,7 @@ def test_deterministic_output():
 
 def test_latency_history_recorded():
     """latency_history must contain one entry per process() call."""
-    pipeline = Tarvium()
+    pipeline = Taivium()
     assert len(pipeline.latency_history) == 0
 
     pipeline.process("Alice works at Acme Corp.")
@@ -465,7 +465,7 @@ def test_latency_history_recorded():
 
 def test_latency_history_capped_at_1000():
     """latency_history must never exceed 1 000 entries."""
-    pipeline = Tarvium()
+    pipeline = Taivium()
     text = "Alice works here."
     # Seed history to just above the cap to trigger the trim path
     pipeline.latency_history = [0.1] * 1001
@@ -475,7 +475,7 @@ def test_latency_history_capped_at_1000():
 # 9.2 / 10.1 Latency Performance
 def test_latency_values_are_positive_milliseconds():
     """Every recorded latency must be a positive float (milliseconds)."""
-    pipeline = Tarvium()
+    pipeline = Taivium()
     pipeline.process("Carol from Beta LLC called +1 415-555-1234.")
     for value in pipeline.latency_history:
         assert isinstance(value, float), "Latency must be a float"
@@ -485,7 +485,7 @@ def test_warm_path_latency_under_200ms_second_call_under_20ms():
     """Warm-path (model already loaded) overhead must stay under the
     200 ms MVP target defined in §10.1."""
     import time
-    pipeline = Tarvium()
+    pipeline = Taivium()
     # Warm-up call loads the spaCy model
     pipeline.process("Alice Johnson from Acme Corp.")
 
@@ -510,7 +510,7 @@ def test__second_call_under_20ms():
     """Warm-path (model already loaded) overhead must stay under the
     200 ms MVP target defined in §10.1."""
     import time
-    pipeline = Tarvium()
+    pipeline = Taivium()
     # Warm-up call loads the spaCy model
     pipeline.process("Alice Johnson from Acme Corp.")
 
@@ -525,14 +525,14 @@ def test__second_call_under_20ms():
     )
 
 def test_long_text_performance():
-    """Test Tarvium performance on a 1426-character text loaded from file."""
+    """Test Taivium performance on a 1426-character text loaded from file."""
     import time
-    from tarvium.engine import Tarvium
+    from taivium.engine import Taivium
     file_path = "tests/long_text_1426_words.txt"
     with open(file_path, "r", encoding="utf-8") as f:
         long_text = f.read()
     assert len(long_text) >= 1000, f"Text is too short: {len(long_text)} chars"
-    pipeline = Tarvium()
+    pipeline = Taivium()
     # Warm-up
     pipeline.process("Alice Johnson from Acme Corp.")
     # Measure performance
