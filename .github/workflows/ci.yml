@@ -27,11 +27,12 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip setuptools wheel
-          pip install -r requirements.txt -r requirements-test.txt --force-reinstall
-          pip install coverage
           # Install CPU-only torch to keep CI fast
           pip install torch==$(grep -oP '(?<=torch==)\S+' requirements.txt) \
             --index-url https://download.pytorch.org/whl/cpu --force-reinstall
+          pip install click
+          pip install -r requirements.txt -r requirements-test.txt --force-reinstall
+          pip install coverage
 
       - name: Pylint
         run: python -m pylint ./src --fail-under=8.0
