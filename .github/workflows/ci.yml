@@ -30,6 +30,9 @@ jobs:
           toolchain: 1.70.0
 
       - name: Install dependencies
+        env:
+          # This tells the Rust compiler to ALLOW the legacy pointer casting
+          RUSTFLAGS: "-A invalid_reference_casting"
         run: |
           pip install --upgrade pip setuptools wheel
           # Install CPU-only torch to keep CI fast
