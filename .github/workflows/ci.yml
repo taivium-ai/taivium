@@ -35,14 +35,20 @@ jobs:
         run: |
           echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
 
-      # Cleaned up redundant path entries; pip cache dir covers it perfectly
-      - name: Cache Pip Packages and Wheels
+      - name: Cache Pip Packages
         uses: actions/cache@v4
         with:
           path: ${{ steps.pip-cache.outputs.dir }}
           key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements.txt', 'requirements-test.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-${{ matrix.python-version }}-
+
+      # --- RUST CACHING ---
+      # This saves the cargo target directory so your tokenizer doesn't rebuild from scratch
+      - name: Cache Rust Build Artifacts
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "."
 
       # --- INSTALL DEPENDENCIES ---
       - name: Install dependencies
@@ -58,27 +64,27 @@ jobs:
           pip install click
           pip install -r requirements.txt -r requirements-test.txt
 
+      # --- LINTING ---
       - name: Pylint
         run: python -m pylint ./src --fail-under=8.0
 
+      # --- TESTING & COVERAGE GENERATION ---
       - name: Run tests with coverage
         run: |
           python -m coverage run -m pytest tests/ -q
-          # 1. Generate XML report so Codecov can easily read it
+          # Generate XML report explicitly for Codecov compatibility
           python -m coverage xml -o coverage.xml
-          # 2. Keep your console summary check
+          # Run the console report verification step
           python -m coverage report \
             --include="src/taivium/*" \
             --show-missing \
             --fail-under=90
 
       # --- UPLOAD TO CODECOV ---
+      # Runs on Python 3.13 unless the workflow was completely cancelled via UI
       - name: Upload coverage to Codecov
-        # Run on Python 3.13 if tests passed, or if tests failed (but not if completely cancelled)
         if: ${{ !cancelled() && matrix.python-version == '3.13' }}
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
-          fail_ci_if_error: true
-          verbose: true
