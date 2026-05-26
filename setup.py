@@ -2,27 +2,10 @@ from setuptools import setup, find_packages
 
 setup(
     name='taivium',
-    # version is now managed in pyproject.toml (PEP 621)
+    version='0.0.1',
     packages=find_packages(where='src'),
     package_dir={'': 'src'},
     install_requires=[
         # Add runtime dependencies here, e.g., 'numpy', 'requests'
-    ],
-    extras_require={
-        'dev': [
-            'pytest',
-            'flake8',
-            'tox'
-        ]
-    },
-    entry_points={
-        'console_scripts': [
-            'taivium=taivium.main:main'
-        ]
-    },
-    classifiers=[
-        'Programming Language :: Python :: 3',
-        'Operating System :: OS Independent',
-    ],
-    python_requires='>=3.7',
+    ]
 )
