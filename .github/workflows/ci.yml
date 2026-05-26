@@ -64,23 +64,21 @@ jobs:
       - name: Run tests with coverage
         run: |
           python -m coverage run -m pytest tests/ -q
+          # 1. Generate XML report so Codecov can easily read it
+          python -m coverage xml -o coverage.xml
+          # 2. Keep your console summary check
           python -m coverage report \
             --include="src/taivium/*" \
             --show-missing \
             --fail-under=90
 
       # --- UPLOAD TO CODECOV ---
-      # This fixes your empty dashboard and ensures metrics reach your account
       - name: Upload coverage to Codecov
+        # Run on Python 3.13 if tests passed, or if tests failed (but not if completely cancelled)
+        if: ${{ !cancelled() && matrix.python-version == '3.13' }}
         uses: codecov/codecov-action@v5
         with:
-          token: ${{ secrets.CODECOV_TOKEN }} 
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.xml
           fail_ci_if_error: true
           verbose: true
-
-      - name: Upload coverage artifact
-        if: matrix.python-version == '3.13'
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: .coverage
