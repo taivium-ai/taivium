@@ -23,12 +23,11 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           # cache: pip
-      # ADD THIS STEP TO FIX RUST COMPILATION FOR OLD TOKENIZERS
-      - name: Set up older Rust toolchain (for old tokenizers)
-        uses: dtolnay/rust-toolchain@stable
+      # --- SET UP RUST TOOLCHAIN FOR LEGACY TOKENIZERS COMPATIBILITY ---
+      - name: Set up older Rust toolchain
+        uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.70.0
-          override: true
 
       - name: Install dependencies
         run: |
