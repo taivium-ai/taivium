@@ -35,13 +35,11 @@ jobs:
         run: |
           echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
 
+      # Cleaned up redundant path entries; pip cache dir covers it perfectly
       - name: Cache Pip Packages and Wheels
         uses: actions/cache@v4
         with:
-          path: |
-            ${{ steps.pip-cache.outputs.dir }}
-            ~/.cache/pip
-          # Unique key based on OS, Python version, and dependency files
+          path: ${{ steps.pip-cache.outputs.dir }}
           key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements.txt', 'requirements-test.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-${{ matrix.python-version }}-
@@ -51,13 +49,14 @@ jobs:
         env:
           RUSTFLAGS: "-A invalid_reference_casting"
         run: |
-          python -m pip install --upgrade pip setuptools wheel
-          # Install CPU-only torch to keep CI fast
-          pip install torch==$(grep -oP '(?<=torch==)\S+' requirements.txt) \
-            --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install --upgrade pip setuptools wheel pylint coverage pytest
+          
+          # Safer fallback for CPU PyTorch installation
+          TORCH_VER=$(python -c "import re; f=open('requirements.txt').read(); m=re.search(r'torch==([\d\.]+)', f); print(m.group(1))" 2>/dev/null || echo "2.2.0")
+          pip install torch==$TORCH_VER --index-url https://download.pytorch.org/whl/cpu
+          
           pip install click
           pip install -r requirements.txt -r requirements-test.txt
-          pip install coverage
 
       - name: Pylint
         run: python -m pylint ./src --fail-under=8.0
@@ -69,6 +68,15 @@ jobs:
             --include="src/taivium/*" \
             --show-missing \
             --fail-under=90
+
+      # --- UPLOAD TO CODECOV ---
+      # This fixes your empty dashboard and ensures metrics reach your account
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }} 
+          fail_ci_if_error: true
+          verbose: true
 
       - name: Upload coverage artifact
         if: matrix.python-version == '3.13'
