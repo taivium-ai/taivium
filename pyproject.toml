@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "taivium"
 version = "0.0.1"
-license = {text = "MIT"}
+license = "MIT"
 requires-python = ">=3.7"
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -14,5 +14,3 @@ classifiers = [
 ]
 [project.optional-dependencies]
 dev = ["pytest", "flake8", "tox"]
-[project.scripts]
-taivium = "taivium.main:main"
