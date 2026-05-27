@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 name = "taivium"
 version = "0.0.1"
 license = "MIT"
-requires-python = ">=3.7"
+requires-python = ">=3.9"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent"
