@@ -10,7 +10,7 @@ Taivium sits between your app and any AI provider, automatically protecting ever
 [![Coverage](https://codecov.io/gh/taivium-ai/taivium/branch/main/graph/badge.svg)](https://codecov.io/gh/taivium-ai/taivium)
 [![PyPI version](https://img.shields.io/pypi/v/taivium)](https://pypi.org/project/taivium/)
 [![PyPI downloads](https://img.shields.io/pypi/dm/taivium)](https://pypi.org/project/taivium/)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](#installation)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)](#installation)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
