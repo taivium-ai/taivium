@@ -511,6 +511,39 @@ def _is_recurrence_eligible(entity: Entity) -> bool:  # pylint: disable=too-many
     # LOCATION and other labels are intentionally excluded unless explicitly allowed.
     return False
 
+# -----------------------------
+# Recurrence word char helper (module-level for testability)
+# -----------------------------
+def _is_word_char(ch: str) -> bool:
+    return ch.isalnum() or ch == '_'
+# -----------------------------
+# Recurrence overlap helper (module-level for testability)
+# -----------------------------
+def _overlaps(covered: list, m_start: int, m_end: int) -> bool:
+    i = bisect.bisect_left(covered, (m_start, m_end))
+    if i > 0:
+        _, c_end = covered[i - 1]
+        if c_end > m_start:
+            return True
+    if i < len(covered):
+        c_start, c_end = covered[i]
+        if c_start < m_end and c_end > m_start:
+            return True
+    return False
+# -----------------------------
+# Recurrence boundary helpers (module-level for testability)
+# -----------------------------
+def _left_boundary_ok(text: str, pos: int, starts_with_word: bool) -> bool:
+    if pos == 0:
+        return True
+    left = text[pos - 1]
+    return (not (left.isalnum() or left == '_')) if starts_with_word else left.isspace()
+
+def _right_boundary_ok(text: str, pos: int, ends_with_word: bool) -> bool:
+    if pos == len(text):
+        return True
+    right = text[pos]
+    return (not (right.isalnum() or right == '_')) if ends_with_word else right.isspace()
 
 def recurrence_evidence(  # pylint: disable=too-many-locals
         text: str, canonical: List[Entity],
@@ -568,32 +601,8 @@ def recurrence_evidence(  # pylint: disable=too-many-locals
     covered: List[Tuple[int, int]] = sorted((e.start, e.end) for e in canonical)
     result: List[Evidence] = []
 
-    def _overlaps(m_start: int, m_end: int) -> bool:
-        i = bisect.bisect_left(covered, (m_start, m_end))
-        if i > 0:
-            _, c_end = covered[i - 1]
-            if c_end > m_start:
-                return True
-        if i < len(covered):
-            c_start, c_end = covered[i]
-            if c_start < m_end and c_end > m_start:
-                return True
-        return False
 
-    def _is_word_char(ch: str) -> bool:
-        return ch.isalnum() or ch == '_'
 
-    def _left_boundary_ok(pos: int, starts_with_word: bool) -> bool:
-        if pos == 0:
-            return True
-        left = text[pos - 1]
-        return (not _is_word_char(left)) if starts_with_word else left.isspace()
-
-    def _right_boundary_ok(pos: int, ends_with_word: bool) -> bool:
-        if pos == len(text):
-            return True
-        right = text[pos]
-        return (not _is_word_char(right)) if ends_with_word else right.isspace()
 
     for entity in canonical:
         if not _is_recurrence_eligible(entity):
@@ -611,11 +620,11 @@ def recurrence_evidence(  # pylint: disable=too-many-locals
                 )
                 break
             s, e = match.start(), match.end()
-            if not _left_boundary_ok(s, starts_with_word):
+            if not _left_boundary_ok(text, s, starts_with_word):
                 continue
-            if not _right_boundary_ok(e, ends_with_word):
+            if not _right_boundary_ok(text, e, ends_with_word):
                 continue
-            if _overlaps(s, e):
+            if _overlaps(covered, s, e):
                 continue
             bisect.insort(covered, (s, e))
             result.append(Evidence(
@@ -693,6 +702,11 @@ class IdentityEngine:
     """
 
     @staticmethod
+    def _is_edge_punctuation(ch: str) -> bool:
+        """Returns True if the character is punctuation suitable for stripping at text edges."""
+        return unicodedata.category(ch).startswith("P")
+
+    @staticmethod
     def normalize_identity_text(text: str) -> str:
         """Normalizes text for semantic identity hashing.
 
@@ -706,15 +720,12 @@ class IdentityEngine:
         normalized = normalized.casefold()
         normalized = " ".join(normalized.split())
 
-        def _is_edge_punctuation(ch: str) -> bool:
-            return unicodedata.category(ch).startswith("P")
-
         start = 0
         end = len(normalized)
 
-        while start < end and _is_edge_punctuation(normalized[start]):
+        while start < end and IdentityEngine._is_edge_punctuation(normalized[start]):
             start += 1
-        while end > start and _is_edge_punctuation(normalized[end - 1]):
+        while end > start and IdentityEngine._is_edge_punctuation(normalized[end - 1]):
             end -= 1
 
         return normalized[start:end]
