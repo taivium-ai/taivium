@@ -1,89 +1,110 @@
 # Taivium
 
-> **Deterministic identity + privacy layer for LLM applications**
->
+> **Deterministic identity + privacy layer for LLM applications**  
 > Sensitive data in → safe prompts out → coherent responses back
 
 Taivium sits between your application and any LLM provider, automatically preventing sensitive data leakage — **without breaking reasoning, context, or output quality**.
 
-No prompt engineering. No degraded responses. No data exposure.
+**No prompt engineering. No degraded responses. No data exposure.**
 
 ---
 
 [![CI](https://github.com/taivium-ai/taivium/actions/workflows/ci.yml/badge.svg)](https://github.com/taivium-ai/taivium/actions/workflows/ci.yml)
 [![Coverage](https://codecov.io/gh/taivium-ai/taivium/branch/main/graph/badge.svg)](https://codecov.io/gh/taivium-ai/taivium)
 [![PyPI version](https://img.shields.io/pypi/v/taivium)](https://pypi.org/project/taivium/)
-[![PyPI downloads](https://img.shields.io/pypi/dm/taivium)](https://pypi.org/project/taivium/)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)](#installation)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Downloads](https://img.shields.io/pypi/dm/taivium)](https://pypi.org/project/taivium/)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue)](#installation)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
+
 ## 🚨 The Problem
 
 Every LLM call is a potential data leak.
 
-- Support copilots process customer names, emails, and account data
-- Developers paste API keys and credentials into tools
-- Healthcare and legal workflows send sensitive records to hosted models
-- RAG pipelines embed confidential business context into vector stores
+- Support copilots handle customer PII (names, emails, accounts)
+- Developers paste secrets (API keys, credentials)
+- Healthcare & legal workflows send sensitive records
+- RAG pipelines embed confidential company data
 
-**Standard redaction makes it worse.**
+**Naive redaction breaks AI quality.**
 
-Replacing `Alice` and `Bob` with `[NAME]` and `[NAME]` destroys identity — your LLM can no longer reason about who is who.
+```
+"Alice emailed Bob" → "[NAME] emailed [NAME]"
+```
 
-**Taivium solves both problems at once.**
+→ Identity is lost → reasoning collapses.
 
 ---
 
-## How It Works
+## ✅ The Solution
+
+**Taivium preserves identity *and* privacy.**
+
+```
+"Alice emailed Bob" → "PERSON_a1b2 emailed PERSON_c3d4"
+```
+
+- Identity remains distinguishable  
+- Context stays intact  
+- Zero sensitive data reaches the LLM  
+
+---
+
+## ⚙️ How It Works
 
 ```
 Your App ──► Taivium ──► LLM (OpenAI / Claude / local)
                 │
-    ┌───────────┴────────────┐
-    │  Detection Layer       │  spaCy · regex · transformer (Optional) · LLM (Optional)
-    │  Span Canonicalization │  one authoritative entity per span
-    │  Identity Engine       │  PERSON_a1b2c3 — consistent forever
-    │  Policy Engine         │  ALLOW · ANONYMIZE · BLOCK
-    │  Session Store         │  in-memory or Redis-backed
-    └────────────────────────┘
+    ┌──────────────────────────────┐
+    │ Detection Layer              │  spaCy · regex · transformer · LLM
+    │ Span Canonicalization        │  one entity per span
+    │ Identity Engine              │  deterministic pseudonyms
+    │ Policy Engine                │  ALLOW · ANONYMIZE · BLOCK
+    │ Session Store                │  memory or Redis
+    └──────────────────────────────┘
                 │
-    Restore original entities in LLM response (optional)
+        Optional response restoration
 ```
 
-Unlike dumb masking, Taivium assigns **consistent pseudonymous tokens** across the entire session. `Alice Johnson` always becomes the same `PERSON_a1b2c3` — so your LLM can still reason coherently about identity across multi-turn conversations, RAG pipelines, and agent workflows.
+**Key idea:**  
+Each real-world entity gets a **stable pseudonymous ID** across the session.
 
-**Full AI quality. Zero data exposure.**
-
-## How Taivium Compares to SOTA
-
-Taivium is not just another redaction tool. It advances the state of the art (SOTA) in privacy-preserving AI by combining strong detection, persistent identity, and utility-preserving anonymization. Here’s how it stacks up:
-
-| Capability           | Current SOTA                | **Taivium**                      |
-|----------------------|-----------------------------|-----------------------------------|
-| Detect PII           | Strong                      | Strong                            |
-| Entity linking       | Good for public KB          | **Private + persistent**          |
-| Coreference          | Decent                      | **Deterministic + cross-session** |
-| Anonymization        | Weak (masking)              | **Semantic preservation**         |
-| Identity memory      | None                        | **Core feature**                  |
-| Utility preservation | Not optimized               | **Core objective**                |
-
-> **Taivium** delivers consistent, session-wide pseudonyms, private entity linking, and utility-preserving anonymization—features missing from today’s SOTA privacy tools. Your LLMs stay smart, your data stays safe.
-
-Taivium's core pipeline is **fully deterministic and reproducible** as long as the optional LLM-based evidence detector is not enabled. All core operations—evidence collection, canonicalization, recurrence, and anonymization—will always produce the same output for the same input, ensuring auditability, repeatability, and robust privacy guarantees.
-
-If you enable the LLM layer (e.g., OpenAI or other non-deterministic models), results may vary between runs due to the inherent stochasticity of large language models. For strict determinism, keep the LLM layer disabled (the default).
-
-Deterministic spaCy and regex will be executed first and therefore will always contribute to the final entity set. The transformer layer (if enabled) is also deterministic, but the LLM layer is not.
 ---
 
-## Installation
+## 🧠 Why Taivium Is Different
+
+| Capability           | Typical Tools        | **Taivium**                  |
+|----------------------|---------------------|------------------------------|
+| PII detection        | ✔                   | ✔                            |
+| Anonymization        | Masking             | **Semantic preservation**    |
+| Identity tracking    | ✗                   | **Deterministic + persistent** |
+| Coreference          | Weak                | **Cross-session consistent** |
+| Utility preservation | ✗                   | **Primary objective**        |
+
+---
+
+## 🔒 Determinism
+
+Taivium is **fully deterministic by default**:
+
+- Same input → same output  
+- Reproducible + auditable  
+- No randomness  
+
+Optional layers:  
+- Transformer → deterministic  
+- LLM → **non-deterministic (opt-in)**  
+
+---
+
+## 📦 Installation
 
 ```bash
 pip install taivium
 ```
 
-Redis support (optional, for cross-session persistence):
+With Redis:
 
 ```bash
 pip install taivium[redis]
@@ -91,11 +112,9 @@ pip install taivium[redis]
 
 ---
 
-## Quick Start
+## 🚀 Quick Start
 
-### Drop-in OpenAI client
-
-Two lines change. Everything else stays the same.
+### 1. Drop-in OpenAI Client
 
 ```python
 from taivium.client import PrivacyClient
@@ -109,37 +128,40 @@ response = client.chat.completions.create(
         "role": "user",
         "content": "John Doe's email is john@acme.com. Draft a follow-up."
     }],
-    deid_response=True,  # restore original names in the response
+    deid_response=True,
 )
 
 print(response.choices[0].message.content)
-# → Response refers to "John Doe" naturally. The LLM never saw the real name.
 ```
 
-### Sanitize text directly
+✔ LLM never sees real data  
+✔ Output still uses real names  
+
+---
+
+### 2. Sanitize Text Directly
 
 ```python
 from taivium.engine import Taivium
 
 pipeline = Taivium()
+
 result = pipeline.process(
-    "Alice Johnson from Acme Corp emailed alice@acme.com. "
-    "Her API key is sk-1234567890abcdef."
+    "Alice Johnson from Acme Corp emailed alice@acme.com"
 )
 
 print(result["anonymized"])
-# → "PERSON_c54953ca from ORG_8d92f143 emailed EMAIL_3fedc406.
-#    Her API key is APIKEY_1a2b3c4d."
-
-print(result["store_type"])
-# → "InMemorySessionStore"
 ```
 
-The same entity always maps to the same token — coherent AI reasoning, guaranteed.
+Example output:
 
-### Custom policies
+```
+PERSON_xxxx from ORG_xxxx emailed EMAIL_xxxx
+```
 
-Block certain entity types outright. Allow others through unchanged.
+---
+
+### 3. Custom Policies
 
 ```python
 from taivium.engine import (
@@ -148,277 +170,145 @@ from taivium.engine import (
 
 pipeline = Taivium(
     policy_engine=PolicyEngine(policy_table={
-        "API_KEY":  PolicyRule("API_KEY",  PolicyAction.BLOCK,     RiskLevel.CRITICAL),
-        "LOCATION": PolicyRule("LOCATION", PolicyAction.ALLOW,     RiskLevel.LOW),
+        "API_KEY": PolicyRule("API_KEY", PolicyAction.BLOCK, RiskLevel.CRITICAL),
+        "LOCATION": PolicyRule("LOCATION", PolicyAction.ALLOW, RiskLevel.LOW),
     })
 )
-
-try:
-    result = pipeline.process("My key is sk-secret123 and I'm in New York.")
-except ValueError as e:
-    print(e)  # Blocked sensitive entity: sk-secret123 (API_KEY)
 ```
 
-### Redis-backed session persistence
+---
 
-Keep the same pseudonymous tokens across restarts, workers, and long-running sessions.
+### 4. Redis Persistence
 
 ```python
 from taivium.engine import Taivium
 from taivium.session_store import RedisSessionStore
 
 store = RedisSessionStore(
-    session_id="user-abc123",
+    session_id="user-123",
     redis_url="redis://localhost:6379",
-    ttl=3600,
 )
+
 pipeline = Taivium(session_store=store)
-
-r1 = pipeline.process("Alice Johnson sent a report.")
-r2 = pipeline.process("Alice Johnson followed up.")
-
-# r1 and r2 use the same PERSON_* token for Alice — always.
-print(r1["store_type"])  # → "RedisSessionStore"
 ```
-
-Start Redis in seconds:
-
-```bash
-docker run -d -p 6379:6379 redis:7-alpine
-```
-
-### Transformer + LLM evidence (optional)
-
-Two extra detection layers can be enabled on top of the default spaCy + regex
-detectors. Both are **opt-in** and degrade gracefully when unavailable.
-
-```python
-from taivium.engine import Taivium
-
-# Transformer layer — requires: pip install transformers torch
-# Uses dslim/bert-base-NER (BERT fine-tuned on CoNLL-2003).
-pipeline = Taivium(use_transformer=True)
-
-result = pipeline.process(
-    "Dr. Emily Clarke joined Horizon AI in Boston. "
-    "Reach her at emily.clarke@horizonai.io or call +1-617-555-0199."
-)
-
-for entity in result["entities"]:
-    print(
-        f"[{entity['label']:10}] {entity['text']!r:30}"
-        f" sources={entity['evidence_sources']}  conf={entity['confidence']:.2f}"
-    )
-# [PERSON    ] 'Emily Clarke'                 sources=('spacy', 'transformer')  conf=0.87
-# [ORG       ] 'Horizon AI'                   sources=('transformer',)           conf=1.00
-# [LOCATION  ] 'Boston'                       sources=('spacy', 'transformer')   conf=0.87
-# [EMAIL     ] 'emily.clarke@horizonai.io'    sources=('regex',)                 conf=0.90
-# [PHONE     ] '+1-617-555-0199'              sources=('regex',)                 conf=0.80
-```
-
-Enable the LLM layer (OpenAI) alongside or independently:
-
-```python
-import os
-os.environ["OPENAI_API_KEY"] = "sk-..."
-
-# Both layers active — broadest detection coverage
-pipeline = Taivium(use_transformer=True, use_llm=True)
-result = pipeline.process("...")
-```
-
-When multiple detectors agree on a span, `evidence_sources` lists all of them
-and `confidence` is their mean score (see [Confidence Scoring](#confidence-scoring)).
-If a layer is unavailable (missing package or missing API key) it is silently
-skipped — the other detectors still run.
-
-### Replace a detector with your own
-
-Pass `transformer_fn` or `llm_fn` to swap the built-in implementation with any
-callable that accepts a `str` and returns `List[Evidence]`. The `use_transformer`
-/ `use_llm` flag must still be `True` for the layer to run.
-
-```python
-from taivium.engine import Evidence, Taivium
-
-def my_ner(text: str) -> list[Evidence]:
-    """Drop-in replacement — use any model, API, or rule set."""
-    # example: tag a known codename
-    idx = text.find("Agent X")
-    if idx == -1:
-        return []
-    return [Evidence(start=idx, end=idx + 7, label="PERSON",
-                     source="transformer", confidence=0.95)]
-
-pipeline = Taivium(use_transformer=True, transformer_fn=my_ner)
-result = pipeline.process("Agent X joined the briefing.")
-# → "PERSON_... joined the briefing."
-```
-
-The same pattern applies to `use_llm=True, llm_fn=my_llm_fn` — useful for
-routing LLM calls to a private endpoint or a different model provider.
 
 ---
 
-## What Gets Detected
+### 5. Optional Detection Layers
+
+```python
+pipeline = Taivium(
+    use_transformer=True,
+    use_llm=True
+)
+```
+
+- Transformer → higher recall  
+- LLM → broader detection  
+- Both optional  
+
+---
+
+## 🔍 What Gets Detected
 
 | Entity Type | Examples |
-|---|---|
-| `PERSON` | Alice Johnson, Bob Smith |
-| `ORG` | Acme Corp, Beta LLC |
-| `EMAIL` | alice@acme.com |
-| `PHONE` | +1 415-555-1234, +44 20 7946 0958 |
-| `API_KEY` | sk-1234567890abcdef, ZXCVBNMASDF |
-| `LOCATION` | San Francisco, New York, Sahara Desert |
-
-Detection combines **spaCy NER**, **regex patterns**, and optionally a
-**transformer NER** model and an **LLM evidence layer** — all fused by a span
-canonicalization engine into one authoritative entity per span.
+|-------------|----------|
+| PERSON      | Alice Johnson |
+| ORG         | Acme Corp |
+| EMAIL       | alice@acme.com |
+| PHONE       | +1 415-555-1234 |
+| API_KEY     | sk-xxxx |
+| LOCATION    | New York |
 
 ---
 
-## Confidence Scoring
+## ⚖️ Why Not Simple Redaction?
 
-Every detected entity carries a `confidence` value in `[0, 1]`. It is computed
-in two stages:
-
-**1. Per-detector raw score** — each detector assigns a fixed or model-derived
-score to every span it emits:
-
-| Detector | Score | Source |
-|---|---|---|
-| `spacy` | `0.75` | Fixed (spaCy `en_core_web_sm` has no per-entity probability) |
-| `regex` | `0.90` (email) · `0.80` (phone) · `0.95` (API key) | Fixed per pattern type |
-| `transformer` | Model probability | Mean softmax score across the entity's tokens (`pred["score"]` from HuggingFace pipeline with `aggregation_strategy="simple"`) |
-| `llm` | `0.85` | Fixed (OpenAI does not return token-level log-probs by default) |
-
-**2. Final entity confidence** — when multiple detectors agree on the same
-span and label, the `confidence` stored on the `Entity` is the **mean** of
-their individual scores:
-
-```
-confidence = mean(score_detector_1, score_detector_2, ...)
-```
-
-Example — "Emily Clarke" detected by both spaCy (`0.75`) and the transformer
-(`1.00`):
-
-```
-confidence = (0.75 + 1.00) / 2 = 0.875  →  rounded to 0.87 in display
-```
-
-> **Span selection vs. reported confidence** — when detector spans *overlap*,
-> the optimizer picks the winning span using a richer internal score (source
-> reliability weights + span-length bonus). That score is only used for
-> selection; the `confidence` field on the final entity is always the simple
-> mean of the contributing detectors.
-
----
-
-## Why Not Simple Redaction?
-
-| | Simple redaction | Taivium |
-|---|---|---|
-| Input | `John emailed Mary` | `John emailed Mary` |
-| To LLM | `[NAME] emailed [NAME]` | `PERSON_a1b2 emailed PERSON_c3d4` |
-| LLM can distinguish identities? | ✗ | ✓ |
-| Same entity = same token across calls? | ✗ | ✓ |
+| | Redaction | Taivium |
+|--|----------|--------|
+| Identity preserved | ✗ | ✓ |
+| Same entity consistency | ✗ | ✓ |
+| LLM reasoning intact | ✗ | ✓ |
 | Response restoration | ✗ | ✓ |
-| Policy engine (block / allow / anonymize) | ✗ | ✓ |
-| Audit trail per request | ✗ | ✓ |
+| Policy control | ✗ | ✓ |
 
 ---
 
-## Features
+## ✨ Features
 
-| Capability | Detail |
-|---|---|
-| Multi-layer detection | spaCy + regex + transformer + LLM evidence (pluggable) |
-| Span canonicalization | Weighted voting resolves overlapping detector evidence — see [Confidence Scoring](#confidence-scoring) |
-| Consistent identity | Same entity text → same token, always |
-| Policy engine | Per-label ALLOW / ANONYMIZE / BLOCK rules |
-| Response restoration | `reverse_transform()` rebuilds original names in LLM output |
-| Session persistence | In-memory (default) or Redis-backed |
-| Audit trail | Full entity mapping + risk + policy decision per call |
-| Latency tracking | Per-call processing time logged in `pipeline.latency_history` |
-| OpenAI drop-in | `PrivacyClient` wraps any OpenAI-compatible endpoint |
-| `store_type` in result | Every `process()` result reports which store backend is active |
+- Multi-layer detection (spaCy + regex + transformer + LLM)
+- Deterministic pseudonymous identity
+- Policy engine (ALLOW / ANONYMIZE / BLOCK)
+- Response restoration
+- Redis session persistence
+- Audit trail per request
+- OpenAI-compatible client
 
 ---
 
-## The `process()` Result
+## 📄 Example Output
 
 ```python
-result = pipeline.process(text)
-# {
-#   "original":   "Alice Johnson emailed alice@acme.com",
-#   "anonymized": "PERSON_c549 emailed EMAIL_3fed",
-#   "store_type": "InMemorySessionStore",       # or RedisSessionStore
-#   "mapping": {
-#     "PERSON_c549": {
-#       "text": "Alice Johnson", "label": "PERSON",
-#       "action": <PolicyAction.ANONYMIZE>, "risk": <RiskLevel.HIGH>, ...
-#     },
-#     ...
-#   },
-#   "entities": [{"text": "Alice Johnson", "label": "PERSON", "id": "PERSON_c549", ...}]
-# }
+result = pipeline.process("Alice emailed alice@acme.com")
+```
+
+```json
+{
+  "original": "Alice emailed alice@acme.com",
+  "anonymized": "PERSON_xxxx emailed EMAIL_xxxx",
+  "store_type": "InMemorySessionStore",
+  "mapping": {...},
+  "entities": [...]
+}
 ```
 
 ---
 
-## Architecture
-
-Taivium is a single Python package. All detection, identity resolution, policy enforcement, and transformation run inside `Taivium` — no external engine required.
-
-Everything in the pipeline runs in-process:
+## 🏗 Architecture
 
 ```
 engine.py
-├── collect_evidence()        spaCy + regex + transformer (stub) + LLM (stub)
-├── canonicalize_spans()      weighted voting → one entity per span
-├── IdentityEngine.resolve()  deterministic pseudonymous IDs
-├── PolicyEngine.evaluate()   ALLOW / ANONYMIZE / BLOCK per label
-├── transform()               span replacement → safe text
-└── session_store             InMemorySessionStore or RedisSessionStore
+├── collect_evidence()
+├── canonicalize_spans()
+├── IdentityEngine.resolve()
+├── PolicyEngine.evaluate()
+├── transform()
+└── session_store
 ```
 
 ---
 
-## Documentation
+## 📚 Documentation
 
-See design document in [docs/](docs/) for detailed architecture, design decisions, and implementation details.
-
----
-
-## Examples
-
-See the [`examples/`](examples/) folder for runnable end-to-end scripts:
-
-| File | Demonstrates |
-|---|---|
-| [`example_privacy_pipeline.py`](examples/example_privacy_pipeline.py) | Default pipeline · custom policies · Redis session · transformer + LLM layers · custom detector injection |
-| [`example_client.py`](examples/example_client.py) | Drop-in `PrivacyClient` (OpenAI-compatible) with de-identification |
+See [`docs/`](docs/) for full design details.
 
 ---
 
-## Contributing
+## 🧪 Examples
 
-Contributions are welcome.
+See [`examples/`](examples/):
 
-1. Fork the repository
-2. Create a feature branch
-3. Add tests — all changes require test coverage
-4. Submit a pull request with a clear description
-
----
-
-## License
-
-MIT — see [LICENSE](LICENSE).
+- privacy pipeline  
+- OpenAI client  
+- custom detectors  
 
 ---
 
-## Support
+## 🤝 Contributing
+
+1. Fork the repo  
+2. Create a branch  
+3. Add tests  
+4. Open PR  
+
+---
+
+## 📜 License
+
+MIT — see [LICENSE](LICENSE)
+
+---
+
+## 💬 Support
 
 Open an issue for bugs, questions, or feature requests.
