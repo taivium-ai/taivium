@@ -15,7 +15,8 @@ jobs:
       url: https://pypi.org/p/taivium
 
     permissions:
-      id-token: write
+      contents: read        # ✅ FIX: required for checkout
+      id-token: write       # ✅ required for PyPI trusted publishing
 
     steps:
       - name: Checkout source
@@ -45,7 +46,7 @@ jobs:
           pip install build
           python -m build
 
-    #   - name: Publish to PyPI
-    #     uses: pypa/gh-action-pypi-publish@release/v1
-    #     with:
-    #       skip-existing: true
+      # - name: Publish to PyPI
+      #   uses: pypa/gh-action-pypi-publish@release/v1
+      #   with:
+      #     skip-existing: true
