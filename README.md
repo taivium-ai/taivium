@@ -3,6 +3,8 @@
 > **Deterministic identity + privacy layer for LLM applications**  
 > Sensitive data in → safe prompts out → coherent responses back
 
+[**View on GitHub**](https://github.com/taivium-ai/taivium)
+
 Taivium sits between your application and any LLM provider, automatically preventing sensitive data leakage — **without breaking reasoning, context, or output quality**.
 
 **No prompt engineering. No degraded responses. No data exposure.**
