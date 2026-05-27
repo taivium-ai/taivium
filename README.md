@@ -1,10 +1,14 @@
 # Taivium
 
-> **Privacy firewall for AI applications.**
-> Sensitive data in — safe prompts out — coherent responses back.
+> **Deterministic identity + privacy layer for LLM applications**
+>
+> Sensitive data in → safe prompts out → coherent responses back
 
-Stop PII, secrets, and customer data from leaking into LLMs.  
-Taivium sits between your app and any AI provider, automatically protecting every request — with zero prompt engineering and zero LLM quality loss.
+Taivium sits between your application and any LLM provider, automatically preventing sensitive data leakage — **without breaking reasoning, context, or output quality**.
+
+No prompt engineering. No degraded responses. No data exposure.
+
+---
 
 [![CI](https://github.com/taivium-ai/taivium/actions/workflows/ci.yml/badge.svg)](https://github.com/taivium-ai/taivium/actions/workflows/ci.yml)
 [![Coverage](https://codecov.io/gh/taivium-ai/taivium/branch/main/graph/badge.svg)](https://codecov.io/gh/taivium-ai/taivium)
@@ -14,17 +18,18 @@ Taivium sits between your app and any AI provider, automatically protecting ever
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
+## 🚨 The Problem
 
-## The Problem
+Every LLM call is a potential data leak.
 
-Every AI call is a potential data leak.
+- Support copilots process customer names, emails, and account data
+- Developers paste API keys and credentials into tools
+- Healthcare and legal workflows send sensitive records to hosted models
+- RAG pipelines embed confidential business context into vector stores
 
-- Support copilots receive customer names, account numbers, and emails
-- Developer tools get pasted with API keys and credentials
-- Healthcare and legal workflows feed patient and case data directly to hosted LLMs
-- RAG pipelines embed confidential business context into external vector stores
+**Standard redaction makes it worse.**
 
-Standard redaction tools make it worse: replacing `Alice` and `Bob` with `[NAME]` and `[NAME]` destroys identity — your LLM can no longer reason about who is who.
+Replacing `Alice` and `Bob` with `[NAME]` and `[NAME]` destroys identity — your LLM can no longer reason about who is who.
 
 **Taivium solves both problems at once.**
 
@@ -50,8 +55,20 @@ Unlike dumb masking, Taivium assigns **consistent pseudonymous tokens** across t
 
 **Full AI quality. Zero data exposure.**
 
----
-## Determinism Guarantee
+## How Taivium Compares to SOTA
+
+Taivium is not just another redaction tool. It advances the state of the art (SOTA) in privacy-preserving AI by combining strong detection, persistent identity, and utility-preserving anonymization. Here’s how it stacks up:
+
+| Capability           | Current SOTA                | **Taivium**                      |
+|----------------------|-----------------------------|-----------------------------------|
+| Detect PII           | Strong                      | Strong                            |
+| Entity linking       | Good for public KB          | **Private + persistent**          |
+| Coreference          | Decent                      | **Deterministic + cross-session** |
+| Anonymization        | Weak (masking)              | **Semantic preservation**         |
+| Identity memory      | None                        | **Core feature**                  |
+| Utility preservation | Not optimized               | **Core objective**                |
+
+> **Taivium** delivers consistent, session-wide pseudonyms, private entity linking, and utility-preserving anonymization—features missing from today’s SOTA privacy tools. Your LLMs stay smart, your data stays safe.
 
 Taivium's core pipeline is **fully deterministic and reproducible** as long as the optional LLM-based evidence detector is not enabled. All core operations—evidence collection, canonicalization, recurrence, and anonymization—will always produce the same output for the same input, ensuring auditability, repeatability, and robust privacy guarantees.
 
