@@ -5,8 +5,8 @@ build-backend = "setuptools.build_meta"
 # Project metadata
 [project]
 name = "taivium"
-version = "0.0.2"
-description = "Every AI call is a potential data leak. Taivium is a privacy firewall for AI applications."
+version = "0.0.3"
+description = "Deterministic identity + privacy layer for LLM applications"
 license = "MIT"
 requires-python = ">=3.9"
 classifiers = [
