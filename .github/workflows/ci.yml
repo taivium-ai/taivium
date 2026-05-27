@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
 
     steps:
       - uses: actions/checkout@v4
@@ -56,7 +56,7 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel pylint coverage pytest
           
           # Safer fallback for CPU PyTorch installation
-          TORCH_VER=$(python -c "import re; f=open('requirements.txt').read(); m=re.search(r'torch==([\d\.]+)', f); print(m.group(1))" 2>/dev/null || echo "2.2.0")
+          TORCH_VER=$(python -c "import re; f=open('requirements.txt').read(); m=re.search(r'torch\s*(?:==|>=|<=|>|<|~=)\s*([\d\.]+)', f); print(m.group(1) if m else '2.7.1')
           pip install torch==$TORCH_VER --index-url https://download.pytorch.org/whl/cpu
           
           pip install click
