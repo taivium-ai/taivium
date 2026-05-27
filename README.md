@@ -36,7 +36,7 @@ Standard redaction tools make it worse: replacing `Alice` and `Bob` with `[NAME]
 Your App ──► Taivium ──► LLM (OpenAI / Claude / local)
                 │
     ┌───────────┴────────────┐
-    │  Detection Layer       │  spaCy · regex · transformer · LLM
+    │  Detection Layer       │  spaCy · regex · transformer (Optional) · LLM (Optional)
     │  Span Canonicalization │  one authoritative entity per span
     │  Identity Engine       │  PERSON_a1b2c3 — consistent forever
     │  Policy Engine         │  ALLOW · ANONYMIZE · BLOCK
@@ -50,6 +50,14 @@ Unlike dumb masking, Taivium assigns **consistent pseudonymous tokens** across t
 
 **Full AI quality. Zero data exposure.**
 
+---
+## Determinism Guarantee
+
+Taivium's core pipeline is **fully deterministic and reproducible** as long as the optional LLM-based evidence detector is not enabled. All core operations—evidence collection, canonicalization, recurrence, and anonymization—will always produce the same output for the same input, ensuring auditability, repeatability, and robust privacy guarantees.
+
+If you enable the LLM layer (e.g., OpenAI or other non-deterministic models), results may vary between runs due to the inherent stochasticity of large language models. For strict determinism, keep the LLM layer disabled (the default).
+
+Deterministic spaCy and regex will be executed first and therefore will always contribute to the final entity set. The transformer layer (if enabled) is also deterministic, but the LLM layer is not.
 ---
 
 ## Installation
@@ -302,15 +310,6 @@ confidence = (0.75 + 1.00) / 2 = 0.875  →  rounded to 0.87 in display
 | Policy engine (block / allow / anonymize) | ✗ | ✓ |
 | Audit trail per request | ✗ | ✓ |
 
----
-
-## Determinism Guarantee
-
-Taivium's core pipeline is **fully deterministic and reproducible** as long as the optional LLM-based evidence detector is not enabled. All core operations—evidence collection, canonicalization, recurrence, and anonymization—will always produce the same output for the same input, ensuring auditability, repeatability, and robust privacy guarantees.
-
-If you enable the LLM layer (e.g., OpenAI or other non-deterministic models), results may vary between runs due to the inherent stochasticity of large language models. For strict determinism, keep the LLM layer disabled (the default).
-
-Deterministic spaCy and regex will be executed first and therefore will always contribute to the final entity set. The transformer layer (if enabled) is also deterministic, but the LLM layer is not.
 ---
 
 ## Features
