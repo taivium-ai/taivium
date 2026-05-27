@@ -10,13 +10,14 @@ Covers:
 """
 
 from __future__ import annotations
-
+import sys
 from typing import Any, Dict
 
 import pytest
 
 from taivium.engine import Taivium
 from taivium.session_store import InMemorySessionStore, RedisSessionStore, _serialize_metadata
+import taivium.session_store as store_mod
 
 
 # ---------------------------------------------------------------------------
@@ -251,3 +252,22 @@ class TestPipelineSessionStoreIntegration:
             assert ids_1["alice@acme.com"] == ids_2["alice@acme.com"], (
                 "Same entity must map to same ID across calls"
             )
+
+def test_redis_importerror(monkeypatch):
+    monkeypatch.setitem(sys.modules, "redis", None)
+    with pytest.raises(ImportError):
+        store_mod.RedisSessionStore(session_id="abc")
+
+# --- session_store.py: set_many Redis pipeline ---
+    class FakeClient:
+        def pipeline(self):
+            class Pipe:
+                def __init__(self): self.calls = []
+                def set(self, k, v, ex=None): self.calls.append((k, v, ex))
+                def execute(self): return self.calls
+            return Pipe()
+    s = store_mod.RedisSessionStore.__new__(store_mod.RedisSessionStore)
+    s._client = FakeClient()
+    s._prefix = "test:"
+    s._ttl = 123
+    s.set_many({"id": {"meta": 1}})  # Should not raise

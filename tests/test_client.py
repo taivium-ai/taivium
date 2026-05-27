@@ -7,12 +7,13 @@ messages it receives and returns a configurable fake response.
 # pylint: disable=protected-access,duplicate-code
 from __future__ import annotations
 
+import sys
+import types
 from types import SimpleNamespace
 from typing import Any, Dict, List
 from unittest.mock import patch
-
 import pytest
-
+import taivium.client as client_mod
 from taivium.client import PrivacyClient, _patch_response_content
 from taivium.engine import (
     PolicyAction,
@@ -501,3 +502,52 @@ def test_store_entry_metadata_includes_label():
     )
     labels = {v.get("label") for v in client._pipeline.session_store.get_all().values()}
     assert "EMAIL" in labels
+
+def test_privacyclient_importerror(monkeypatch):
+    monkeypatch.setitem(sys.modules, "openai", None)
+    with pytest.raises(ImportError):
+        client_mod.PrivacyClient()
+
+def test_privacyclient_redis_and_inmemory(monkeypatch):
+    class FakeCompletions:
+        def create(self, *a, **k):
+            return None
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeCompletions()
+    class FakeOpenAIClass:
+        def __init__(self, **kwargs):
+            self.chat = FakeChat()
+    fake_mod = types.SimpleNamespace(OpenAI=FakeOpenAIClass)
+    monkeypatch.setitem(sys.modules, "openai", fake_mod)
+    # With session_id: should use RedisSessionStore
+    c = client_mod.PrivacyClient(session_id="abc", redis_url="redis://localhost:6379")
+    assert hasattr(c._pipeline.session_store, "set_many")
+    # Without session_id: should use InMemorySessionStore
+    c2 = client_mod.PrivacyClient()
+    assert hasattr(c2._pipeline.session_store, "set_many")
+
+# --- PrivacyClient __init__ error and store selection ---
+def test_privacyclient_importerror(monkeypatch):
+    monkeypatch.setitem(sys.modules, "openai", None)
+    with pytest.raises(ImportError):
+        client_mod.PrivacyClient()
+
+def test_privacyclient_redis_and_inmemory(monkeypatch):
+    class FakeCompletions:
+        def create(self, *a, **k):
+            return None
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeCompletions()
+    class FakeOpenAIClass:
+        def __init__(self, **kwargs):
+            self.chat = FakeChat()
+    fake_mod = types.SimpleNamespace(OpenAI=FakeOpenAIClass)
+    monkeypatch.setitem(sys.modules, "openai", fake_mod)
+    # With session_id: should use RedisSessionStore
+    c = client_mod.PrivacyClient(session_id="abc", redis_url="redis://localhost:6379")
+    assert hasattr(c._pipeline.session_store, "set_many")
+    # Without session_id: should use InMemorySessionStore
+    c2 = client_mod.PrivacyClient()
+    assert hasattr(c2._pipeline.session_store, "set_many")

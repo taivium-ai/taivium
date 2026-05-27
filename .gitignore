@@ -97,3 +97,4 @@ cython_debug/
 .github/instructions
 .github/prompt
 
+docs_internal

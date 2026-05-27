@@ -294,3 +294,19 @@ class TestModelEnvVar:
         llm_mod.llm_evidence("Alice is here.")
         _, call_kwargs = client.chat.completions.create.call_args
         assert call_kwargs["model"] == "gpt-4o"
+
+
+def test_llm_warns_on_missing_key(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    llm_mod._WarnState.warned_no_api_key = False
+    with pytest.warns(RuntimeWarning):
+        llm_mod.llm_evidence("test")
+
+def test_llm_handles_openai_error(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            raise RuntimeError("fail")
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    result = llm_mod.llm_evidence("test")
+    assert result == []
