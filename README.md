@@ -18,7 +18,7 @@ Taivium sits between your application and any LLM provider, automatically preven
 
 ---
 
-## 🚨 The Problem
+## The Problem
 
 Every LLM call is a potential data leak.
 
@@ -37,7 +37,7 @@ Every LLM call is a potential data leak.
 
 ---
 
-## ✅ The Solution
+## The Solution
 
 **Taivium preserves identity *and* privacy.**
 
@@ -51,7 +51,7 @@ Every LLM call is a potential data leak.
 
 ---
 
-## ⚙️ How It Works
+## How It Works
 
 ```
 Your App ──► Taivium ──► LLM (OpenAI / Claude / local)
@@ -72,7 +72,7 @@ Each real-world entity gets a **stable pseudonymous ID** across the session.
 
 ---
 
-## 🧠 Why Taivium Is Different
+## Why Taivium Is Different
 
 | Capability           | Typical Tools        | **Taivium**                  |
 |----------------------|---------------------|------------------------------|
@@ -84,7 +84,7 @@ Each real-world entity gets a **stable pseudonymous ID** across the session.
 
 ---
 
-## 🔒 Determinism
+## Determinism
 
 Taivium is **fully deterministic by default**:
 
@@ -98,7 +98,7 @@ Optional layers:
 
 ---
 
-## 📦 Installation
+## Installation
 
 ```bash
 pip install taivium
@@ -112,7 +112,7 @@ pip install taivium[redis]
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Drop-in OpenAI Client
 
@@ -209,7 +209,7 @@ pipeline = Taivium(
 
 ---
 
-## 🔍 What Gets Detected
+## What Gets Detected
 
 | Entity Type | Examples |
 |-------------|----------|
@@ -222,7 +222,7 @@ pipeline = Taivium(
 
 ---
 
-## ⚖️ Why Not Simple Redaction?
+## Why Not Simple Redaction?
 
 | | Redaction | Taivium |
 |--|----------|--------|
@@ -234,7 +234,7 @@ pipeline = Taivium(
 
 ---
 
-## ✨ Features
+## Features
 
 - Multi-layer detection (spaCy + regex + transformer + LLM)
 - Deterministic pseudonymous identity
@@ -246,7 +246,7 @@ pipeline = Taivium(
 
 ---
 
-## 📄 Example Output
+## Example Output
 
 ```python
 result = pipeline.process("Alice emailed alice@acme.com")
@@ -264,7 +264,7 @@ result = pipeline.process("Alice emailed alice@acme.com")
 
 ---
 
-## 🏗 Architecture
+## Architecture
 
 ```
 engine.py
@@ -278,13 +278,13 @@ engine.py
 
 ---
 
-## 📚 Documentation
+## Documentation
 
 See [`docs/`](docs/) for full design details.
 
 ---
 
-## 🧪 Examples
+## Examples
 
 See [`examples/`](examples/):
 
@@ -294,7 +294,7 @@ See [`examples/`](examples/):
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 1. Fork the repo  
 2. Create a branch  
@@ -303,12 +303,12 @@ See [`examples/`](examples/):
 
 ---
 
-## 📜 License
+## License
 
 MIT — see [LICENSE](LICENSE)
 
 ---
 
-## 💬 Support
+## Support
 
 Open an issue for bugs, questions, or feature requests.
