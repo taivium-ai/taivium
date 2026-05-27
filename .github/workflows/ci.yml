@@ -59,7 +59,7 @@ jobs:
             --extra-index-url https://download.pytorch.org/whl/cpu
             # --- LINTING ---
       - name: Pylint
-        run: python -m pylint ./src --fail-under=9.5
+        run: python -m pylint ./src --fail-under=9.7
 
       # --- TESTING & COVERAGE GENERATION ---
       - name: Run tests with coverage
