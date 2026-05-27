@@ -11,7 +11,7 @@ Taivium sits between your application and any LLM provider, automatically preven
 
 [![CI](https://github.com/taivium-ai/taivium/actions/workflows/ci.yml/badge.svg)](https://github.com/taivium-ai/taivium/actions/workflows/ci.yml)
 [![Coverage](https://codecov.io/gh/taivium-ai/taivium/branch/main/graph/badge.svg)](https://codecov.io/gh/taivium-ai/taivium)
-[![PyPI version](https://img.shields.io/pypi/v/taivium)](https://pypi.org/project/taivium/)
+[![PyPI version](https://img.shields.io/pypi/v/taivium?cacheSeconds=0)](https://pypi.org/project/taivium/)
 [![Downloads](https://img.shields.io/pypi/dm/taivium)](https://pypi.org/project/taivium/)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](#installation)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
