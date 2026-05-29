@@ -279,7 +279,7 @@ class TestEvidenceFields:
 class TestModelEnvVar:
     def test_default_model_is_gpt_4o_mini(self, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-        monkeypatch.delenv("PRIVACYZE_LLM_MODEL", raising=False)
+        monkeypatch.delenv("LLM_MODEL", raising=False)
         client = _mock_client("[]")
         monkeypatch.setattr("openai.OpenAI", lambda **kw: client)
         llm_mod.llm_evidence("Alice is here.")
@@ -288,7 +288,7 @@ class TestModelEnvVar:
 
     def test_custom_model_from_env(self, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-        monkeypatch.setenv("PRIVACYZE_LLM_MODEL", "gpt-4o")
+        monkeypatch.setenv("LLM_MODEL", "gpt-4o")
         client = _mock_client("[]")
         monkeypatch.setattr("openai.OpenAI", lambda **kw: client)
         llm_mod.llm_evidence("Alice is here.")

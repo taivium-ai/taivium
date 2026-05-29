@@ -8,7 +8,7 @@ named entities from text.  The detector is opt-in: it only runs when
 
 Model override::
 
-    PRIVACYZE_LLM_MODEL=gpt-4o  # set in environment to use a different model
+    LLM_MODEL=gpt-4o  # set in environment to use a different model
 """
 # pylint: disable=import-outside-toplevel
 from __future__ import annotations
@@ -116,7 +116,7 @@ def llm_evidence(text: str) -> List[Evidence]:
     """Collects NER evidence by querying an OpenAI chat model.
 
     Sends *text* to ``gpt-4o-mini`` (or the model set in the
-    ``PRIVACYZE_LLM_MODEL`` environment variable) with a structured prompt
+    ``LLM_MODEL`` environment variable) with a structured prompt
     that requests a JSON list of entity surface forms and types.  Character
     offsets are recovered by scanning the source text for each returned
     surface form.
@@ -156,7 +156,7 @@ def llm_evidence(text: str) -> List[Evidence]:
     try:
         from openai import OpenAI  # type: ignore[import]  # pylint: disable=import-outside-toplevel
         client = OpenAI(api_key=api_key)
-        model = os.getenv("PRIVACYZE_LLM_MODEL", "gpt-4o-mini")
+        model = os.getenv("LLM_MODEL", "gpt-4o-mini")
         response = client.chat.completions.create(
             model=model,
             messages=[
