@@ -279,11 +279,33 @@ result = pipeline.process("Alice emailed alice@acme.com")
 
 ```json
 {
-  "original": "Alice emailed alice@acme.com",
-  "anonymized": "PERSON_xxxx emailed EMAIL_xxxx",
-  "store_type": "InMemorySessionStore",
-  "mapping": {...},
-  "entities": [...]
+    "original": "Alice emailed alice@acme.com",
+    "anonymized": "PERSON_xxxx emailed EMAIL_xxxx",
+    "store_type": "InMemorySessionStore",
+    "    mapping = {
+        "PERSON_7e4a1c2b3d4e5f6a7b8c9d0e": "Alice",
+        "EMAIL_1a2b3c4d5e6f7a8b9c0d1e2f": "alice@acme.com"
+    }": {},
+    "entities": [
+        {
+            "text": "Alice",
+            "label": "PERSON",
+            "start": 0,
+            "end": 5,
+            "source": "spacy",
+            "evidence_sources": ["spacy", "regex"],
+            "confidence": 0.92
+        },
+        {
+            "text": "alice@acme.com",
+            "label": "EMAIL",
+            "start": 14,
+            "end": 28,
+            "source": "regex",
+            "evidence_sources": ["regex"],
+            "confidence": 0.95
+        }
+    ]
 }
 ```
 
