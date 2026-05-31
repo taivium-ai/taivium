@@ -977,7 +977,7 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         llm_fn: Optional[Callable[[str], List[Evidence]]] = None,
         id_salt: Optional[str] = None,
         id_hash_len: int = 12,
-    ):  # pylint: disable=too-many-arguments
+    ):  # pylint: disable=too-many-arguments,too-many-positional-arguments
         """
         id_salt: Optional string to scope entity IDs (tenant/session/namespace).
         id_hash_len: Number of hex digits to use from the hash (default 12 for 
