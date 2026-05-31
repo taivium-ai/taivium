@@ -1,4 +1,4 @@
-name: CD - Publish Release
+name: CD - Publish Release to PyPI
 
 on:
   workflow_dispatch:
