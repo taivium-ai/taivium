@@ -23,21 +23,27 @@ jobs:
           with: 
             python-version: "3.11"
 
-        # 🔁 Retry loop with proper failure
-        - name: Wait for package to be available
+        - name: Install taivium from TestPyPI
           run: |
-            for i in {1..10}; do
-                if pip install --index-url https://test.pypi.org/simple/ \
-                               --no-deps \
-                            taivium; then
-                echo "✅ Package installed"
-                exit 0
+            VERSION=$(curl -s https://test.pypi.org/pypi/taivium/json | python -c "import sys, json; print(json.load(sys.stdin)['info']['version'])")
+
+            for i in {1..12}; do
+                echo "Installing taivium==$VERSION"
+
+                if pip install \
+                    --no-cache-dir \
+                    --index-url https://test.pypi.org/simple/ \
+                    --extra-index-url https://pypi.org/simple \
+                    taivium=="$VERSION"; then
+                    echo "✅ Installed successfully"
+                    exit 0
                 fi
-                echo "Retry $i: package not available yet..."
+
+                echo "Retry $i..."
                 sleep 10
             done
 
-            echo "❌ Failed to install package after retries"
+            echo "❌ Failed to install"
             exit 1
 
         - name: Verify installation
