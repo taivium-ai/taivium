@@ -1,0 +1,49 @@
+name: Test Package from TestPyPI
+
+on:
+    workflow_run:
+        workflows: ["CD - Publish Release to TestPyPI"]
+        types: [completed]
+
+jobs:
+    test_install:
+        if: ${{ github.event.workflow_run.conclusion == 'success' }}
+        runs-on: ubuntu-latest
+
+        steps:
+        - name: Set up Python
+          uses: actions/setup-python@v5
+          with: 
+            python-version: "3.11"
+
+        # 🔁 Retry loop with proper failure
+        - name: Wait for package to be available
+          run: |
+            for i in {1..10}; do
+                if pip install --index-url https://test.pypi.org/simple/ \
+                            --extra-index-url https://pypi.org/simple \
+                            taivium; then
+                echo "✅ Package installed"
+                exit 0
+                fi
+                echo "Retry $i: package not available yet..."
+                sleep 10
+            done
+
+            echo "❌ Failed to install package after retries"
+            exit 1
+
+        - name: Verify installation
+          run: python -c "import taivium; print('Installed version:', taivium.__version__)"
+
+        - name: Run example script
+          run: |
+            python - << 'EOF'
+            from taivium.engine import Taivium
+
+            text = "Alice Johnson from Acme Corp emailed alice@acme.com."
+            result = Taivium().process(text)
+
+            assert "PERSON_" in result["anonymized"]
+            print("✅ Example ran successfully")
+            EOF
