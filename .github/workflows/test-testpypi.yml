@@ -36,6 +36,9 @@ jobs:
         - name: Verify installation
           run: python -c "import taivium; print('Installed version:', taivium.__version__)"
 
+        - name: Download spaCy model
+          run: python -m spacy download en_core_web_sm
+
         - name: Run example script
           run: |
             python - << 'EOF'
