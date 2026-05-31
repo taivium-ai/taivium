@@ -25,44 +25,34 @@ For custom policies::
     })
     client = PrivacyClient(api_key="sk-...", policy_engine=policy)
 """
-import os
+
+from importlib.metadata import version, PackageNotFoundError
+
 from .client import PrivacyClient
-from .engine import (Entity, Evidence, PolicyAction, PolicyDecision,
-                               PolicyContext, PolicyDecisionReason, PolicyEngine, PolicyRule,
-                               Taivium, RiskLevel, find_recurrences, recurrence_evidence,
-                               reverse_transform)
+from .engine import (
+    Entity,
+    Evidence,
+    PolicyAction,
+    PolicyDecision,
+    PolicyContext,
+    PolicyDecisionReason,
+    PolicyEngine,
+    PolicyRule,
+    Taivium,
+    RiskLevel,
+    find_recurrences,
+    recurrence_evidence,
+    reverse_transform,
+)
 from .session_store import InMemorySessionStore, RedisSessionStore, SessionStore
 
-# Dynamically set __version__ from package metadata or pyproject.toml if available
+
 try:
-    import importlib.metadata
-    __version__ = importlib.metadata.version("taivium")
-except (ImportError, AttributeError, ModuleNotFoundError):
-    try:
-        from pkg_resources import get_distribution, DistributionNotFound
-        try:
-            __version__ = get_distribution("taivium").version
-        except DistributionNotFound:
-            pass
-    except (ImportError, ModuleNotFoundError):
-        try:
-            import tomllib  # Python 3.11+
-            pyproject_path = os.path.join(os.path.dirname(__file__), "..", "..", "pyproject.toml")
-            with open(os.path.abspath(pyproject_path), "rb") as f:
-                pyproject = tomllib.load(f)
-                __version__ = pyproject["project"]["version"]
-        except (ImportError, ModuleNotFoundError):
-            try:
-                import toml  # fallback for older Python
-                pyproject_path = os.path.join(
-                    os.path.dirname(__file__), "..", "..", "pyproject.toml")
-                with open(os.path.abspath(pyproject_path), "r", encoding="utf-8") as f:
-                    pyproject = toml.load(f)
-                    __version__ = pyproject["project"]["version"]
-            except Exception as exc:
-                raise ImportError(
-                    "Could not determine taivium version from package metadata or pyproject.toml."
-                    ) from exc
+    __version__ = version("taivium")
+except PackageNotFoundError:
+    # Fallback for local/dev usage (package not installed)
+    __version__ = "0.0.0"
+
 
 __all__ = [
     # High-level SDK entry point
