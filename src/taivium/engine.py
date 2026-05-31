@@ -11,6 +11,7 @@ span canonicalization, identity resolution, and anonymization.
 import bisect
 import hashlib
 import logging
+import json
 import re
 import time
 import unicodedata
@@ -75,7 +76,6 @@ def get_spacy_model() -> Any:
 # -----------------------------
 # Evidence and Entity structures
 # -----------------------------
-
 
 @dataclass(frozen=True)
 class Evidence:
@@ -805,7 +805,6 @@ def reverse_transform(text: str, mapping: Dict[str, Dict[str, Any]]) -> str:
         result = result.replace(eid, mapping[eid]["text"])
     return result
 
-
 # -----------------------------
 # Policy Engine
 # -----------------------------
@@ -1020,7 +1019,6 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         start = time.perf_counter()
 
         logger.info("Processing text: %.60r", text[:60])
-
         # Step 1: collect raw detector evidence.
         evidence = collect_evidence(
             text,
@@ -1131,3 +1129,60 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
                 for e, eid, _ in results
             ]
         }
+
+
+# Thread-safe cache for Taivium instances keyed by options
+import threading
+_engine_cache = {}
+_engine_cache_lock = threading.Lock()
+
+def _options_key(parsed_options):
+    # Only use options that affect instantiation, and make them hashable
+    return (
+        parsed_options.get("use_transformer", False),
+        parsed_options.get("use_llm", False),
+        parsed_options.get("id_salt"),
+        parsed_options.get("id_hash_len", 12),
+        # Do not include non-hashable objects like functions or custom classes
+    )
+
+def module_engine_process(text: str, options=None) -> dict:
+    """
+    Thread-safe, multi-config process function for gRPC server or programmatic use.
+    Accepts options as a dict or JSON string. Caches Taivium instances by options for efficiency.
+    """
+    _logger = logging.getLogger("taivium.engine")
+    _logger.info(
+        "[DEBUG] process() called with text type: %s, options type: %s", 
+        type(text), type(options))
+
+    parsed_options = {}
+    if options:
+        if isinstance(options, dict):
+            parsed_options = options
+        elif isinstance(options, str):
+            try:
+                parsed_options = json.loads(options)
+            except json.JSONDecodeError as exc:
+                _logger.error("Failed to parse options JSON: %s", exc)
+                return {"error": f"Failed to parse options JSON: {exc}"}
+            if not isinstance(parsed_options, dict):
+                _logger.error("Options JSON must decode to a dict; got %s", type(parsed_options))
+                return {"error": f"Options JSON must decode to a dict; got {type(parsed_options)}"}
+        else:
+            _logger.error("Options must be a dict or JSON string, got %s", type(options))
+            return {"error": f"Options must be a dict or JSON string, got {type(options)}"}
+
+    key = _options_key(parsed_options)
+    with _engine_cache_lock:
+        engine = _engine_cache.get(key)
+        if engine is None:
+            # Build taivium_args programmatically from Taivium's __init__
+            import inspect
+            taivium_init = inspect.signature(Taivium.__init__)
+            valid_keys = set(taivium_init.parameters.keys()) - {"self"}
+            taivium_args = {k: v for k, v in parsed_options.items() if k in valid_keys}
+            # Not caching on transformer_fn/llm_fn for thread safety
+            engine = Taivium(**taivium_args)
+            _engine_cache[key] = engine
+    return engine.process(text)
