@@ -11,6 +11,13 @@ jobs:
         runs-on: ubuntu-latest
 
         steps:
+
+      # 🔗 Tie job to the exact commit
+        - name: Checkout repository
+          uses: actions/checkout@v4
+          with:
+            ref: ${{ github.event.workflow_run.head_sha }}
+
         - name: Set up Python
           uses: actions/setup-python@v5
           with: 
@@ -21,7 +28,6 @@ jobs:
           run: |
             for i in {1..10}; do
                 if pip install --index-url https://test.pypi.org/simple/ \
-                            --extra-index-url https://pypi.org/simple \
                             taivium; then
                 echo "✅ Package installed"
                 exit 0
