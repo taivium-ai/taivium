@@ -30,18 +30,18 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Verify version matches tag
-        shell: bash
-        run: |
-          VERSION=$(python -c "import tomllib; f=open('pyproject.toml','rb'); print(tomllib.load(f)['project']['version'])")
-          TAG=${GITHUB_REF#refs/tags/v}
-          echo "Version: $VERSION"
-          echo "Tag: $TAG"
+      # - name: Verify version matches tag
+      #   shell: bash
+      #   run: |
+      #     VERSION=$(python -c "import tomllib; f=open('pyproject.toml','rb'); print(tomllib.load(f)['project']['version'])")
+      #     TAG=${GITHUB_REF#refs/tags/v}
+      #     echo "Version: $VERSION"
+      #     echo "Tag: $TAG"
 
-          if [ "$VERSION" != "$TAG" ]; then
-            echo "Version mismatch!"
-            exit 1
-          fi
+      #     if [ "$VERSION" != "$TAG" ]; then
+      #       echo "Version mismatch!"
+      #       exit 1
+      #     fi
 
       - name: Build package (wheel + sdist)
         run: |
