@@ -966,7 +966,6 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         # Both salt and custom hash length
         engine = Taivium(id_salt="tenant_1234", id_hash_len=24)
     """
-
     def __init__(
         self,
         policy_engine: Optional[PolicyEngine] = None,
