@@ -59,6 +59,7 @@ jobs:
           # pip install -r requirements.txt -r requirements-test.txt \
           #   --extra-index-url https://download.pytorch.org/whl/cpu
           pip install -e .
+          python -m spacy download en_core_web_sm
             # --- LINTING ---
       - name: Pylint
         run: python -m pylint ./src --fail-under=9.7
