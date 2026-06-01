@@ -1146,11 +1146,11 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
 
 # Thread-safe cache for Taivium instances keyed by options
 import threading
-_engine_cache: dict[tuple[bool, bool, str | None, int], Taivium] = {}
+_engine_cache: Dict[Tuple[bool, bool, Optional[str], int], Taivium] = {}
 _engine_cache_lock = threading.Lock()
 
 
-def _options_key(parsed_options: dict[str, Any]) -> tuple[bool, bool, str | None, int]:
+def _options_key(parsed_options: Dict[str, Any]) -> Tuple[bool, bool, Optional[str], int]:
     # Only use options that affect instantiation, and make them hashable
     return (
         bool(parsed_options.get("use_transformer", False)),
