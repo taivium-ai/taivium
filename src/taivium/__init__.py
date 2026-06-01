@@ -44,6 +44,7 @@ from .engine import (
     recurrence_evidence,
     reverse_transform,
 )
+from .audit_logger import log_audit_event
 from .session_store import InMemorySessionStore, RedisSessionStore, SessionStore
 
 
@@ -77,4 +78,6 @@ __all__ = [
     # Session stores
     "InMemorySessionStore",
     "RedisSessionStore",
+    # Audit logging (enterprise override applies automatically if taivium-enterprise is installed)
+    "log_audit_event",
 ]

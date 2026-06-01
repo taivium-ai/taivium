@@ -25,6 +25,7 @@ import spacy
 from .transformer import transformer_evidence
 from .session_store import InMemorySessionStore, SessionStore
 from .llm import llm_evidence
+from .audit_logger import log_audit_event
 
 logger = logging.getLogger("taivium.engine")
 
@@ -800,9 +801,18 @@ def reverse_transform(text: str, mapping: Dict[str, Dict[str, Any]]) -> str:
     Replacement is applied longest-token-first to avoid partial matches
     when one token is a prefix of another (unlikely given SHA-256 IDs, but safe).
     """
+    start = time.perf_counter()
     result = text
     for eid in sorted(mapping, key=len, reverse=True):
         result = result.replace(eid, mapping[eid]["text"])
+    log_audit_event(
+        operation="reverse_transform",
+        session_id="",
+        entity_count=len(mapping),
+        entity_types=[v.get("label", "") for v in mapping.values()],
+        duration_ms=(time.perf_counter() - start) * 1000,
+        status="ok",
+    )
     return result
 
 # -----------------------------
@@ -1110,6 +1120,16 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         if len(self.latency_history) > 1000:
             self.latency_history = self.latency_history[-1000:]
         logger.info("Processing latency: %.2f ms", latency_ms)
+
+        log_audit_event(
+            operation="process",
+            session_id=getattr(self.session_store, "session_id", ""),
+            entity_count=len(mapping),
+            entity_types=[v["label"] for v in mapping.values()],
+            duration_ms=latency_ms,
+            status="ok",
+        )
+
         return {
             "original": text,
             "anonymized": anonymized_text,
