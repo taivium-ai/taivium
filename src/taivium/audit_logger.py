@@ -22,7 +22,7 @@ def log_audit_event(
         duration_ms: Duration in milliseconds.
         status: Operation status.
     """
-    event = {
+    event: dict[str, object] = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "operation": operation,
         "session_id": session_id,
@@ -41,6 +41,9 @@ def log_audit_event(
 # Allow enterprise pack to override log_audit_event with an enriched implementation.
 # If taivium_enterprise is installed, its log_audit_event replaces this one transparently.
 try:
-    from taivium_enterprise.audit import log_audit_event  # type: ignore[no-redef]  # noqa: F401, F811
+    import importlib as _importlib
+    _enterprise = _importlib.import_module("taivium_enterprise.audit")
+    log_audit_event = _enterprise.log_audit_event  # noqa: F811
+    del _importlib, _enterprise
 except ImportError:
     pass
