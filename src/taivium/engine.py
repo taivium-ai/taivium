@@ -10,9 +10,11 @@ span canonicalization, identity resolution, and anonymization.
 
 import bisect
 import hashlib
-import logging
+import inspect
 import json
+import logging
 import re
+import threading
 import time
 import unicodedata
 from collections import defaultdict
@@ -1145,7 +1147,6 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
 
 
 # Thread-safe cache for Taivium instances keyed by options
-import threading
 _engine_cache: Dict[Tuple[bool, bool, Optional[str], int], Taivium] = {}
 _engine_cache_lock = threading.Lock()
 
@@ -1182,22 +1183,28 @@ def module_engine_process(text: str, options: Any = None) -> "Dict[str, Any]":
                 _logger.error("Failed to parse options JSON: %s", exc)
                 return {"error": f"Failed to parse options JSON: {exc}"}
             if not isinstance(_decoded, dict):
-                _logger.error("Options JSON must decode to a dict; got %s", type(_decoded).__name__)
-                return {"error": f"Options JSON must decode to a dict; got {type(_decoded).__name__}"}
+                decoded_type = type(_decoded).__name__
+                _logger.error(
+                    "Options JSON must decode to a dict; got %s", decoded_type)
+                return {
+                    "error": f"Options JSON must decode to a dict; got {decoded_type}"}
             parsed_options = cast(dict[str, Any], _decoded)
         else:
-            _logger.error("Options must be a dict or JSON string, got %s", type(options).__name__)
-            return {"error": f"Options must be a dict or JSON string, got {type(options).__name__}"}
+            options_type = type(options).__name__
+            _logger.error("Options must be a dict or JSON string, got %s",
+                         options_type)
+            return {
+                "error": f"Options must be a dict or JSON string, got {options_type}"}
 
     key = _options_key(parsed_options)
     with _engine_cache_lock:
         engine = _engine_cache.get(key)
         if engine is None:
             # Build taivium_args programmatically from Taivium's __init__
-            import inspect
             taivium_init = inspect.signature(Taivium.__init__)
             valid_keys = set(taivium_init.parameters.keys()) - {"self"}
-            taivium_args: dict[str, Any] = {k: v for k, v in parsed_options.items() if k in valid_keys}
+            taivium_args: dict[str, Any] = {
+                k: v for k, v in parsed_options.items() if k in valid_keys}
             # Not caching on transformer_fn/llm_fn for thread safety
             engine = Taivium(**taivium_args)
             _engine_cache[key] = engine
