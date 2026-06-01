@@ -10,20 +10,24 @@ span canonicalization, identity resolution, and anonymization.
 
 import bisect
 import hashlib
+import inspect
+import json
 import logging
 import re
+import threading
 import time
 import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, cast, Dict, List, Optional, Tuple
 
 import spacy
 from .transformer import transformer_evidence
 from .session_store import InMemorySessionStore, SessionStore
 from .llm import llm_evidence
+from .audit_logger import log_audit_event
 
 logger = logging.getLogger("taivium.engine")
 
@@ -75,7 +79,6 @@ def get_spacy_model() -> Any:
 # -----------------------------
 # Evidence and Entity structures
 # -----------------------------
-
 
 @dataclass(frozen=True)
 class Evidence:
@@ -519,7 +522,7 @@ def _is_word_char(ch: str) -> bool:
 # -----------------------------
 # Recurrence overlap helper (module-level for testability)
 # -----------------------------
-def _overlaps(covered: list, m_start: int, m_end: int) -> bool:
+def _overlaps(covered: list[tuple[int, int]], m_start: int, m_end: int) -> bool:
     i = bisect.bisect_left(covered, (m_start, m_end))
     if i > 0:
         _, c_end = covered[i - 1]
@@ -673,13 +676,6 @@ def find_recurrences(
     entities.sort(key=lambda e: e.start)
     return entities
 
-def _text_span_integrity(text: str, entities: List[Entity]) -> bool:
-    """Returns True if all entity.text matches text[entity.start:entity.end]."""
-    for e in entities:
-        if e.text != text[e.start:e.end]:
-            return False
-    return True
-
 # -----------------------------
 # Identity Engine (deterministic)
 # -----------------------------
@@ -800,11 +796,19 @@ def reverse_transform(text: str, mapping: Dict[str, Dict[str, Any]]) -> str:
     Replacement is applied longest-token-first to avoid partial matches
     when one token is a prefix of another (unlikely given SHA-256 IDs, but safe).
     """
+    start = time.perf_counter()
     result = text
     for eid in sorted(mapping, key=len, reverse=True):
         result = result.replace(eid, mapping[eid]["text"])
+    log_audit_event(
+        operation="reverse_transform",
+        session_id="",
+        entity_count=len(mapping),
+        entity_types=[v.get("label", "") for v in mapping.values()],
+        duration_ms=(time.perf_counter() - start) * 1000,
+        status="ok",
+    )
     return result
-
 
 # -----------------------------
 # Policy Engine
@@ -1020,7 +1024,6 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         start = time.perf_counter()
 
         logger.info("Processing text: %.60r", text[:60])
-
         # Step 1: collect raw detector evidence.
         evidence = collect_evidence(
             text,
@@ -1112,6 +1115,16 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         if len(self.latency_history) > 1000:
             self.latency_history = self.latency_history[-1000:]
         logger.info("Processing latency: %.2f ms", latency_ms)
+
+        log_audit_event(
+            operation="process",
+            session_id=getattr(self.session_store, "session_id", ""),
+            entity_count=len(mapping),
+            entity_types=[v["label"] for v in mapping.values()],
+            duration_ms=latency_ms,
+            status="ok",
+        )
+
         return {
             "original": text,
             "anonymized": anonymized_text,
@@ -1131,3 +1144,68 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
                 for e, eid, _ in results
             ]
         }
+
+
+# Thread-safe cache for Taivium instances keyed by options
+_engine_cache: Dict[Tuple[bool, bool, Optional[str], int], Taivium] = {}
+_engine_cache_lock = threading.Lock()
+
+
+def _options_key(parsed_options: Dict[str, Any]) -> Tuple[bool, bool, Optional[str], int]:
+    # Only use options that affect instantiation, and make them hashable
+    return (
+        bool(parsed_options.get("use_transformer", False)),
+        bool(parsed_options.get("use_llm", False)),
+        parsed_options.get("id_salt") or None,
+        int(parsed_options.get("id_hash_len", 12)),
+        # Do not include non-hashable objects like functions or custom classes
+    )
+
+
+def module_engine_process(text: str, options: Any = None) -> "Dict[str, Any]":
+    """
+    Thread-safe, multi-config process function for gRPC server or programmatic use.
+    Accepts options as a dict or JSON string. Caches Taivium instances by options for efficiency.
+    """
+    _logger = logging.getLogger("taivium.engine")
+    _logger.info(
+        "[DEBUG] process() called with text type: %s, options type: %s", 
+        type(text).__name__, type(options).__name__)
+
+    parsed_options: dict[str, Any] = {}
+    if options:
+        if isinstance(options, dict):
+            parsed_options = cast(dict[str, Any], options)
+        elif isinstance(options, str):
+            try:
+                _decoded = json.loads(options)
+            except json.JSONDecodeError as exc:
+                _logger.error("Failed to parse options JSON: %s", exc)
+                return {"error": f"Failed to parse options JSON: {exc}"}
+            if not isinstance(_decoded, dict):
+                decoded_type = type(_decoded).__name__
+                _logger.error(
+                    "Options JSON must decode to a dict; got %s", decoded_type)
+                return {
+                    "error": f"Options JSON must decode to a dict; got {decoded_type}"}
+            parsed_options = cast(dict[str, Any], _decoded)
+        else:
+            options_type = type(options).__name__
+            _logger.error("Options must be a dict or JSON string, got %s",
+                         options_type)
+            return {
+                "error": f"Options must be a dict or JSON string, got {options_type}"}
+
+    key = _options_key(parsed_options)
+    with _engine_cache_lock:
+        engine = _engine_cache.get(key)
+        if engine is None:
+            # Build taivium_args programmatically from Taivium's __init__
+            taivium_init = inspect.signature(Taivium.__init__)
+            valid_keys = set(taivium_init.parameters.keys()) - {"self"}
+            taivium_args: dict[str, Any] = {
+                k: v for k, v in parsed_options.items() if k in valid_keys}
+            # Not caching on transformer_fn/llm_fn for thread safety
+            engine = Taivium(**taivium_args)
+            _engine_cache[key] = engine
+    return engine.process(text)
