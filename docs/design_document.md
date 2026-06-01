@@ -504,6 +504,32 @@ store = RedisSessionStore(
 pipeline = Taivium(session_store=store)
 ```
 
+#### Multi-tenant Session Store Isolation
+
+When `tenant_id` is provided to `RedisSessionStore`, it becomes the **primary isolation boundary** for data storage. The tenant_id is incorporated into the Redis key prefix as:
+
+```
+taivium:<tenant_id>:session:<session_id>:<entity_id>
+```
+
+For example, tenant "acme" stores entities under `taivium:acme:session:user-123:PERSON_xxxx`, while tenant "globex" stores under `taivium:globex:session:user-123:PERSON_xxxx`. This ensures complete Redis namespace isolation across tenants despite using identical session IDs.
+
+**Important design note:** The `session_id` parameter in `RedisSessionStore` is **not** per-request; it is typically a fixed placeholder (e.g., "tenant-session") when used in multi-tenant gRPC deployments. Full tenant isolation is achieved through the `tenant_id` prefix, not the session ID. This allows different gRPC requests from the same tenant to share the same Redis namespace (intended for distributed session persistence across multiple API calls), while requests from different tenants are completely isolated.
+
+```python
+# Multi-tenant usage in gRPC server context:
+# Extract tenant_id from gRPC x-tenant-id header
+store = RedisSessionStore(
+    session_id="tenant-session",  # Fixed placeholder; isolation via tenant_id
+    tenant_id=extracted_tenant_id,  # Primary isolation boundary
+    redis_url="redis://localhost:6379",
+    ttl=3600,
+)
+pipeline = Taivium(session_store=store)
+```
+
+This pattern ensures full data isolation for regulated or multi-tenant deployments while maintaining the ability to persist session state across multiple requests within a tenant.
+
 #### Hashing Standard
 
 Entity hashes are generated using SHA-256 on the string `"<LABEL>:<normalized_entity_text>"`, where `<normalized_entity_text>` is produced by `normalize_identity_text()`. The digest is truncated to the first 12 hexadecimal characters. This ensures deterministic, collision-resistant mapping for anonymization tokens (e.g., `PERSON_abcdef123456`) while collapsing semantic surface variants like case, repeated spaces, punctuation edges, and equivalent Unicode forms.

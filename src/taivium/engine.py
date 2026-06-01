@@ -23,9 +23,11 @@ from enum import Enum
 from functools import lru_cache
 from typing import Any, Callable, cast, Dict, List, Optional, Tuple
 
+import os
+
 import spacy
 from .transformer import transformer_evidence
-from .session_store import InMemorySessionStore, SessionStore
+from .session_store import InMemorySessionStore, SessionStore, RedisSessionStore
 from .llm import llm_evidence
 from .audit_logger import log_audit_event
 
@@ -1166,6 +1168,11 @@ def module_engine_process(text: str, options: Any = None) -> "Dict[str, Any]":
     """
     Thread-safe, multi-config process function for gRPC server or programmatic use.
     Accepts options as a dict or JSON string. Caches Taivium instances by options for efficiency.
+    
+    Supports per-tenant session stores:
+    - If 'tenant_id' is in options, creates a RedisSessionStore with that tenant
+    - Requires REDIS_URL and SESSION_TTL_SECONDS environment variables
+    - Falls back to InMemorySessionStore if Redis not configured
     """
     _logger = logging.getLogger("taivium.engine")
     _logger.info(
@@ -1196,6 +1203,34 @@ def module_engine_process(text: str, options: Any = None) -> "Dict[str, Any]":
             return {
                 "error": f"Options must be a dict or JSON string, got {options_type}"}
 
+    # Extract tenant_id if present (used for per-tenant session store)
+    tenant_id = parsed_options.pop("tenant_id", None)
+    
+    # Create session store based on tenant_id
+    session_store: SessionStore = InMemorySessionStore()
+    if tenant_id:
+        redis_url = os.getenv('REDIS_URL')
+        if redis_url:
+            ttl_str = os.getenv('SESSION_TTL_SECONDS', '86400')
+            try:
+                ttl = int(ttl_str)
+            except ValueError:
+                _logger.warning("Invalid SESSION_TTL_SECONDS: %s, using default 86400", ttl_str)
+                ttl = 86400
+            try:
+                session_store = RedisSessionStore(
+                    session_id="tenant-session",  # Placeholder; unused in per-tenant mode
+                    redis_url=redis_url,
+                    ttl=ttl,
+                    tenant_id=tenant_id
+                )
+                _logger.info("Created per-tenant RedisSessionStore for tenant: %s", tenant_id)
+            except (OSError, IOError) as e:
+                _logger.warning("Failed to create per-tenant RedisSessionStore for tenant %s: %s; falling back to in-memory", tenant_id, e)
+                session_store = InMemorySessionStore()
+        else:
+            _logger.debug("tenant_id provided but REDIS_URL not configured; using in-memory session store")
+
     key = _options_key(parsed_options)
     with _engine_cache_lock:
         engine = _engine_cache.get(key)
@@ -1208,4 +1243,14 @@ def module_engine_process(text: str, options: Any = None) -> "Dict[str, Any]":
             # Not caching on transformer_fn/llm_fn for thread safety
             engine = Taivium(**taivium_args)
             _engine_cache[key] = engine
-    return engine.process(text)
+    
+    # If per-tenant session store was created, temporarily set it on the engine
+    if tenant_id:
+        original_store = engine.session_store
+        engine.session_store = session_store
+        try:
+            return engine.process(text)
+        finally:
+            engine.session_store = original_store
+    else:
+        return engine.process(text)

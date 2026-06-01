@@ -224,6 +224,9 @@ Redis keys are namespaced as:
 taivium:<tenant_id>:session:<session_id>:<entity_id>
 ```
 
+**Multi-tenant Isolation:**  
+When using `tenant_id`, it becomes the **primary isolation boundary**. The session ID component is fixed per-tenant; different requests with the same `tenant_id` share the same Redis namespace (intended for distributed session persistence across multiple requests). Different tenants get completely isolated namespaces regardless of session ID. This ensures full data isolation in multi-tenant gRPC deployments.
+
 ---
 
 ### 5. Optional Detection Layers
