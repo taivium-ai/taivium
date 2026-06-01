@@ -1312,9 +1312,18 @@ def module_engine_process(text: str, options: Any = None) -> "Dict[str, Any]":
     if options_error is not None or parsed_options is None:
         return {"error": options_error or "Unknown options parsing error"}
 
-    # Extract tenant_id if present (used for per-tenant session store)
+    # Extract tenant_id if present (used for per-tenant session store and ID salt)
     tenant_id = parsed_options.pop("tenant_id", None)
     session_store = _build_tenant_session_store(tenant_id, _logger)
+    
+    # Use tenant_id as automatic id_salt if not explicitly provided by user
+    # This ensures different tenants get different anonymized IDs for the same content
+    if tenant_id and not parsed_options.get("id_salt"):
+        _logger.info(
+            "Using tenant_id %s as automatic id_salt for tenant-scoped anonymization",
+            tenant_id,
+        )
+        parsed_options["id_salt"] = tenant_id
 
     key = _options_key(parsed_options)
     with _engine_cache_lock:
