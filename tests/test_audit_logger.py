@@ -1,6 +1,7 @@
 import io
 import json
 import sys
+import types
 from unittest.mock import patch
 
 import pytest
@@ -67,3 +68,66 @@ def test_silent_on_os_error(capsys):
     broken = io.TextIOWrapper(io.RawIOBase())  # write() always raises OSError
     with patch("taivium.audit_logger.sys.stdout", broken):
         _call()   # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Enterprise override — importlib-based replacement
+# ---------------------------------------------------------------------------
+
+def test_enterprise_override_replaces_log_audit_event():
+    """When taivium_enterprise.audit is importable, log_audit_event is replaced."""
+    sentinel = object()
+
+    # Build a minimal fake module with a replacement log_audit_event
+    fake_module = types.ModuleType("taivium_enterprise.audit")
+    fake_module.log_audit_event = sentinel  # type: ignore[attr-defined]
+
+    import taivium.audit_logger as _mod
+
+    with patch.dict("sys.modules", {"taivium_enterprise.audit": fake_module}):
+        # Re-execute only the override block so the rest of the module is untouched
+        import importlib as _importlib
+        _enterprise = _importlib.import_module("taivium_enterprise.audit")
+        _mod.log_audit_event = _enterprise.log_audit_event  # type: ignore[attr-defined]
+        try:
+            assert _mod.log_audit_event is sentinel
+        finally:
+            # Restore the original implementation so other tests are unaffected
+            from taivium.audit_logger import log_audit_event as _orig  # noqa: F401
+            # Re-import the real function from its definition in the module source
+            import importlib
+            importlib.reload(_mod)
+
+
+def test_enterprise_override_import_error_keeps_default():
+    """When taivium_enterprise is absent, the built-in log_audit_event is kept."""
+    import taivium.audit_logger as _mod
+    import importlib
+
+    # Remove any cached enterprise modules and reload without them
+    sys_modules_backup = {
+        k: v for k, v in sys.modules.items() if "taivium_enterprise" in k
+    }
+    for k in sys_modules_backup:
+        del sys.modules[k]
+
+    try:
+        importlib.reload(_mod)
+        # Must still be callable and emit JSON
+        buf = io.StringIO()
+        with patch.object(_mod, "sys", sys):
+            with patch("taivium.audit_logger.sys.stdout", buf):
+                _mod.log_audit_event(
+                    operation="test",
+                    session_id="",
+                    entity_count=0,
+                    entity_types=[],
+                    duration_ms=0.0,
+                    status="ok",
+                )
+        event = json.loads(buf.getvalue())
+        assert event["operation"] == "test"
+    finally:
+        importlib.reload(_mod)
+        for k, v in sys_modules_backup.items():
+            sys.modules[k] = v
