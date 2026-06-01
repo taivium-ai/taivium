@@ -211,10 +211,17 @@ from taivium.session_store import RedisSessionStore
 
 store = RedisSessionStore(
     session_id="user-123",
+    tenant_id="tenant-acme",  # optional (defaults to "default")
     redis_url="redis://localhost:6379",
 )
 
 pipeline = Taivium(session_store=store)
+```
+
+Redis keys are namespaced as:
+
+```text
+taivium:<tenant_id>:session:<session_id>:<entity_id>
 ```
 
 ---
