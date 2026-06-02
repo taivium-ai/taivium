@@ -319,6 +319,104 @@ def test_parse_module_engine_options_accepts_json_dict_string():
     assert parsed == {"tenant_id": "tenant-acme", "use_llm": True}
 
 
+# ---------------------------------------------------------------------------
+# _resolve_default_session_ttl — uncovered error branches
+# ---------------------------------------------------------------------------
+
+def test_resolve_default_session_ttl_non_integer_falls_back(monkeypatch):
+    """Non-integer SESSION_TTL_SECONDS logs a warning and returns 86400."""
+    monkeypatch.setenv('SESSION_TTL_SECONDS', 'not-a-number')
+    logger = eng.logging.getLogger("taivium.engine")
+
+    result = eng._resolve_default_session_ttl(logger)
+
+    assert result == 86400
+
+
+def test_resolve_default_session_ttl_zero_falls_back(monkeypatch):
+    """SESSION_TTL_SECONDS=0 is invalid; logs a warning and returns 86400."""
+    monkeypatch.setenv('SESSION_TTL_SECONDS', '0')
+    logger = eng.logging.getLogger("taivium.engine")
+
+    result = eng._resolve_default_session_ttl(logger)
+
+    assert result == 86400
+
+
+def test_resolve_default_session_ttl_negative_falls_back(monkeypatch):
+    """Negative SESSION_TTL_SECONDS logs a warning and returns 86400."""
+    monkeypatch.setenv('SESSION_TTL_SECONDS', '-100')
+    logger = eng.logging.getLogger("taivium.engine")
+
+    result = eng._resolve_default_session_ttl(logger)
+
+    assert result == 86400
+
+
+# ---------------------------------------------------------------------------
+# _resolve_tenant_session_ttl — uncovered error branches
+# ---------------------------------------------------------------------------
+
+def test_resolve_tenant_session_ttl_invalid_json_falls_back(monkeypatch):
+    """Invalid JSON in TENANT_SESSION_TTL_SECONDS logs a warning and returns default_ttl."""
+    monkeypatch.setenv('TENANT_SESSION_TTL_SECONDS', '{not valid json}')
+    logger = eng.logging.getLogger("taivium.engine")
+
+    result = eng._resolve_tenant_session_ttl("tenant-acme", 3600, logger)
+
+    assert result == 3600
+
+
+def test_resolve_tenant_session_ttl_non_dict_json_falls_back(monkeypatch):
+    """TENANT_SESSION_TTL_SECONDS that decodes to a list (not dict) logs a warning and returns default_ttl."""
+    monkeypatch.setenv('TENANT_SESSION_TTL_SECONDS', '[1, 2, 3]')
+    logger = eng.logging.getLogger("taivium.engine")
+
+    result = eng._resolve_tenant_session_ttl("tenant-acme", 3600, logger)
+
+    assert result == 3600
+
+
+def test_resolve_tenant_session_ttl_invalid_value_for_tenant_falls_back(monkeypatch):
+    """Non-integer per-tenant TTL value logs a warning and returns default_ttl."""
+    monkeypatch.setenv('TENANT_SESSION_TTL_SECONDS', '{"tenant-acme": "bad-value"}')
+    logger = eng.logging.getLogger("taivium.engine")
+
+    result = eng._resolve_tenant_session_ttl("tenant-acme", 3600, logger)
+
+    assert result == 3600
+
+
+def test_resolve_tenant_session_ttl_zero_value_for_tenant_falls_back(monkeypatch):
+    """Zero per-tenant TTL value is invalid; logs a warning and returns default_ttl."""
+    monkeypatch.setenv('TENANT_SESSION_TTL_SECONDS', '{"tenant-acme": 0}')
+    logger = eng.logging.getLogger("taivium.engine")
+
+    result = eng._resolve_tenant_session_ttl("tenant-acme", 3600, logger)
+
+    assert result == 3600
+
+
+# ---------------------------------------------------------------------------
+# _build_tenant_session_store — OSError/IOError fallback branch
+# ---------------------------------------------------------------------------
+
+def test_build_tenant_session_store_falls_back_on_redis_oserror(monkeypatch):
+    """OSError from RedisSessionStore.__init__ logs a warning and returns InMemorySessionStore."""
+    monkeypatch.setenv('REDIS_URL', 'redis://localhost:6379')
+    monkeypatch.setenv('SESSION_TTL_SECONDS', '3600')
+
+    def mock_redis_init_raises(self, **kwargs):
+        raise OSError("connection refused")
+
+    with patch.object(eng.RedisSessionStore, '__init__', mock_redis_init_raises):
+        store = eng._build_tenant_session_store(
+            "tenant-acme", eng.logging.getLogger("taivium.engine")
+        )
+
+    assert isinstance(store, eng.InMemorySessionStore)
+
+
 def test_parse_module_engine_options_rejects_invalid_json_string():
     """Helper returns parse error on invalid JSON string."""
     parsed, err = eng._parse_module_engine_options(
