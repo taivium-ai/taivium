@@ -6,7 +6,7 @@ from pathlib import Path
 import pickle
 
 from taivium import Taivium
-from .utility import compute_prf, cache_file_from_payload
+from .utility import compute_prf, cache_file_from_payload, get_git_commit_hash
 CACHE_DIR = Path(__file__).parent / ".cache"
 CACHE_DIR.mkdir(exist_ok=True)
 
@@ -16,14 +16,13 @@ def taivium_evaluation(dataset, comparable_golds, allowed_labels,
     '''Evaluate spaCy NER performance on the dataset. 
     Returns TP, FP, FN counts and error samples.'''
 
-    
-
     cache_payload = {
         "dataset": dataset,
         "comparable_golds": comparable_golds,
         "max_errors": max_errors,
         "allowed_labels": allowed_labels,
         "model_name": model_name,
+        "commit_hash": get_git_commit_hash('.')  # Returns: 3aee14c8d2ab26b56645a4f6ff5616ea5477870a
     }
     cache_file = cache_file_from_payload(__file__, cache_payload)
 
@@ -41,7 +40,7 @@ def taivium_evaluation(dataset, comparable_golds, allowed_labels,
     taivium_errors = []
 
     # -------  start evaluation loop -------
-    for idx, example in enumerate(dataset["validation"]):
+    for idx, _ in enumerate(dataset["validation"]):
         # -------  Golden ground truth -------
         text, comparable_gold = comparable_golds[idx]
 
