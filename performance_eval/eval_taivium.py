@@ -3,10 +3,13 @@ Reference evaluation using spaCy NER models. Provides a benchmark for
 Taivium's performance on the same datasets and label profiles.
 '''
 from pathlib import Path
+import logging
 import pickle
 
 from taivium import Taivium
 from .utility import compute_prf, cache_file_from_payload, get_git_commit_hash
+
+logger = logging.getLogger(__name__)
 CACHE_DIR = Path(__file__).parent / ".cache"
 CACHE_DIR.mkdir(exist_ok=True)
 
@@ -28,9 +31,10 @@ def taivium_evaluation(dataset, comparable_golds, allowed_labels,
 
     # Check if cache exists
     if cache_file.exists():
+        logger.warning(f"Loading Taivium evaluation from cache: {cache_file}")
         with open(cache_file, 'rb') as f:
             taivium_metrics, taivium_errors = pickle.load(f)
-        return taivium_metrics, taivium_errors
+        return taivium_metrics, taivium_errors, cache_file
 
 
     # Initialize Taivium engine
@@ -70,7 +74,8 @@ def taivium_evaluation(dataset, comparable_golds, allowed_labels,
     taivium_metrics = {"precision": taivium_p, "recall": taivium_r, "f1": taivium_f1}
 
     # Save to pickle cache
+    logger.warning(f"Saving Taivium evaluation to cache: {cache_file}")
     with open(cache_file, 'wb') as f:
         pickle.dump((taivium_metrics, taivium_errors), f)
 
-    return taivium_metrics, taivium_errors
+    return taivium_metrics, taivium_errors, cache_file

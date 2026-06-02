@@ -2,10 +2,13 @@
 Reference evaluation using spaCy NER models. Provides a benchmark for 
 Taivium's performance on the same datasets and label profiles.
 '''
+import logging
 import pickle
 import spacy
 from taivium.engine import normalize_label
 from .utility import compute_prf, cache_file_from_payload
+
+logger = logging.getLogger(__name__)
 
 
 def spacy_evaluation(dataset, comparable_golds, allowed_labels,
@@ -24,9 +27,11 @@ def spacy_evaluation(dataset, comparable_golds, allowed_labels,
 
     # Check if cache exists
     if cache_file.exists():
+        logger.warning(
+            f"Loading spaCy evaluation from cache: {cache_file}")
         with open(cache_file, 'rb') as f:
             spacy_metrics, spacy_errors = pickle.load(f)
-        return spacy_metrics, spacy_errors
+        return spacy_metrics, spacy_errors, cache_file
 
     nlp = spacy.load(model_name)
     spacy_tp = spacy_fp = spacy_fn = 0
@@ -62,7 +67,8 @@ def spacy_evaluation(dataset, comparable_golds, allowed_labels,
     spacy_metrics = {"precision": spacy_p, "recall": spacy_r, "f1": spacy_f1}
 
     # Save to pickle cache
+    logger.warning(f"Saving spaCy evaluation to cache: {cache_file}")
     with open(cache_file, 'wb') as f:
         pickle.dump((spacy_metrics, spacy_errors), f)
 
-    return spacy_metrics, spacy_errors
+    return spacy_metrics, spacy_errors, cache_file

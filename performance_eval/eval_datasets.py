@@ -1,12 +1,15 @@
 '''Module for loading and caching evaluation datasets, 
     converting them to a standardized format, and preparing ground 
     truth spans for performance evaluation.'''
+import logging
 from datasets import load_dataset #huggingface
 import pickle
 from pathlib import Path
 from typing import Any
 from .utility import conll_to_gold_spans
 from .utility import cache_file_from_payload
+
+logger = logging.getLogger(__name__)
 
 # Cache dataset locally for fast reuse
 CACHE_DIR = Path(__file__).parent / ".cache"
@@ -42,6 +45,7 @@ def load_cached_dataset(ds_name: str, allowed_labels) -> Any:
                     {"dataset": ds_name, "allowed_labels": allowed_labels})
 
     if dataset_file.exists():
+        logger.warning(f"Loading dataset from cache: {dataset_file}")
         with open(dataset_file, "rb") as f:
             ds = pickle.load(f)
     else:
@@ -62,6 +66,7 @@ def load_cached_dataset(ds_name: str, allowed_labels) -> Any:
         comparable_golds.append((text, comparable_gold))
 
     CACHE_DIR.mkdir(exist_ok=True)
+    logger.warning(f"Saving dataset to cache: {dataset_file}")
     with open(dataset_file, "wb") as f:
         pickle.dump(ds, f)
 

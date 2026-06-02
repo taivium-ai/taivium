@@ -2,8 +2,11 @@
 import json
 import hashlib
 import subprocess
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def _stable_serialize(value):
@@ -34,6 +37,8 @@ def _stable_serialize(value):
 def cache_file_from_payload(module_file, payload, cache_subdir=".cache", suffix=".pkl"):
     """Return a deterministic cache file path for the given payload."""
     cache_dir = Path(module_file).parent / cache_subdir
+    if not cache_dir.exists():
+        logger.warning(f"Creating cache directory: {cache_dir}")
     cache_dir.mkdir(exist_ok=True)
     stable_payload = _stable_serialize(payload)
     cache_key = json.dumps(stable_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
@@ -123,23 +128,29 @@ def conll_to_gold_spans(example, ner_tag_names, label_map):
     return text, gold_spans
 
 def compute_prf(tp, fp, fn):
-    '''Compute precision, recall, and F1 score from true positives, false positives, and false negatives.'''
+    '''Compute precision, recall, and F1 score from true positives, \
+        false positives, and false negatives.'''
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
     f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
     return precision, recall, f1
 
+def calculate_delta(metrics1, metrics2):
+    """Calculate the delta between two metrics."""
+    delta = {
+        "precision": metrics1["precision"] - metrics2["precision"],
+        "recall": metrics1["recall"] - metrics2["recall"],
+        "f1": metrics1["f1"] - metrics2["f1"],
+    }
+    return delta
 
-def save_results(profile, labels, spacy_metrics, taivium_metrics, spacy_errors, taivium_errors):
+def save_results(profile, labels, spacy_metrics, taivium_metrics, 
+                 spacy_errors, taivium_errors, taivium_cache_file):
     """Persist metrics/deltas and wrong-detection samples to files."""
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_id = f"{profile}_{timestamp}"
 
-    delta = {
-        "precision": taivium_metrics["precision"] - spacy_metrics["precision"],
-        "recall": taivium_metrics["recall"] - spacy_metrics["recall"],
-        "f1": taivium_metrics["f1"] - spacy_metrics["f1"],
-    }
+    delta = calculate_delta(taivium_metrics, spacy_metrics)
 
     payload = {
         "run_id": run_id,
@@ -151,8 +162,10 @@ def save_results(profile, labels, spacy_metrics, taivium_metrics, spacy_errors, 
         "delta_taivium_minus_spacy": delta,
     }
 
-    results_dir = Path(__file__).parent / "results"
-    results_dir.mkdir(exist_ok=True)
+    # Use cache filename (without extension) as folder name
+    cache_folder = taivium_cache_file.parent / taivium_cache_file.stem
+    results_dir = cache_folder / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
 
     latest_json = results_dir / f"latest_{profile}.json"
     latest_txt = results_dir / f"latest_{profile}.txt"
@@ -238,14 +251,12 @@ def save_results(profile, labels, spacy_metrics, taivium_metrics, spacy_errors, 
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(errors_report)
 
-    return (
-        latest_json,
-        latest_txt,
-        run_json,
-        run_txt,
-        latest_errors_json,
-        latest_errors_txt,
-        run_errors_json,
-        run_errors_txt,
-        delta,
-    )
+    print("\nSaved files:")
+    print(latest_json)
+    print(latest_txt)
+    print(run_json)
+    print(run_txt)
+    print(latest_errors_json)
+    print(latest_errors_txt)
+    print(run_errors_json)
+    print(run_errors_txt)
