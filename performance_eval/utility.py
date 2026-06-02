@@ -61,6 +61,22 @@ def get_git_commit_hash(repo_path="."):
         raise RuntimeError(f"Failed to get git commit hash: {e.stderr}") from e
 
 
+def get_git_tag(repo_path="."):
+    """Get comma-separated git tag(s) pointing at HEAD, or None if no tags exist."""
+    try:
+        result = subprocess.run(
+            ["git", "tag", "--points-at", "HEAD"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        tags = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        return ", ".join(tags) if tags else None
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Failed to get git tag(s): {e.stderr}") from e
+
+
 def check_git_clean(repo_path="."):
     """Check if git working directory is clean (no staged or unstaged changes).
     Raises ValueError if there are uncommitted changes.
@@ -144,23 +160,32 @@ def calculate_delta(metrics1, metrics2):
     }
     return delta
 
-def save_results(profile, labels, spacy_metrics, taivium_metrics, 
-                 spacy_errors, taivium_errors, taivium_cache_file):
+def save_results(profile, labels, spacy_metrics, taivium_metrics,
+                 spacy_errors, taivium_errors, taivium_cache_file,
+                 spacy_model, taivium_spacy_model):
     """Persist metrics/deltas and wrong-detection samples to files."""
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_id = f"{profile}_{timestamp}"
 
     delta = calculate_delta(taivium_metrics, spacy_metrics)
 
+    commit_hash = get_git_commit_hash()
+    git_tag = get_git_tag()
+
     payload = {
         "run_id": run_id,
         "timestamp_utc": timestamp,
+        "spaCy Model": spacy_model,
+        "Taivium spaCy Model": taivium_spacy_model,
+        "Git Commit Hash": commit_hash,
         "profile": profile,
         "labels": sorted(labels),
         "spacy": spacy_metrics,
         "taivium": taivium_metrics,
         "delta_taivium_minus_spacy": delta,
     }
+    if git_tag:
+        payload["Git Tag"] = git_tag
 
     # Use cache filename (without extension) as folder name
     cache_folder = taivium_cache_file.parent / taivium_cache_file.stem
@@ -185,8 +210,15 @@ def save_results(profile, labels, spacy_metrics, taivium_metrics,
         "taivium_wrong_detections": taivium_errors,
     }
 
+    tag_line = f"Git Tag: {git_tag}\n" if git_tag else ""
+
     report = (
         f"Run ID: {run_id}\n"
+        f"Timestamp (UTC): {timestamp}\n"
+        f"spaCy Model: {spacy_model}\n"
+        f"Taivium spaCy Model: {taivium_spacy_model}\n"
+        f"Git Commit Hash: {commit_hash}\n"
+        f"{tag_line}"
         f"Profile: {profile}\n"
         f"Labels: {', '.join(sorted(labels))}\n\n"
         f"spaCy\n"

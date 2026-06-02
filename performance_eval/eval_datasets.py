@@ -65,9 +65,10 @@ def load_cached_dataset(ds_name: str, allowed_labels) -> Any:
         comparable_gold = {s for s in gold_spans if s[2] in allowed_labels}
         comparable_golds.append((text, comparable_gold))
 
-    CACHE_DIR.mkdir(exist_ok=True)
-    logger.warning(f"Saving dataset to cache: {dataset_file}")
-    with open(dataset_file, "wb") as f:
-        pickle.dump(ds, f)
+    if not dataset_file.exists():
+        CACHE_DIR.mkdir(exist_ok=True)
+        logger.warning(f"Saving dataset to cache: {dataset_file}")
+        with open(dataset_file, "wb") as f:
+            pickle.dump(ds, f)
 
     return ds, _ner_tag_names, comparable_golds

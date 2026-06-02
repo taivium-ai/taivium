@@ -32,6 +32,21 @@ parser.add_argument(
     default=200,
     help="Maximum number of wrong-detection text samples to save per model.",
 )
+
+parser.add_argument(
+    "--spacy-model-name",
+    type=str,
+    default="en_core_web_lg",
+    help="spaCy model name for evaluation.",
+)
+
+parser.add_argument(
+    "--taivium-spacy-model-name",
+    type=str,
+    default="en_core_web_lg",
+    help="spaCy model in Taivium for evaluation.",
+)
+
 args, _ = parser.parse_known_args()
 
 allowed_labels = LABEL_PROFILES[args.profile]
@@ -39,7 +54,7 @@ allowed_labels = LABEL_PROFILES[args.profile]
 dataset, ner_tag_names, comparable_golds = load_cached_dataset(args.dataset, allowed_labels)
 spacy_metrics, spacy_errors, spacy_cache_file = spacy_evaluation(dataset, comparable_golds,
                                                allowed_labels, args.max_errors,
-                                               model_name="en_core_web_lg")
+                                               model_name=args.spacy_model_name)
 
 # Evaluate spaCy baseline
 print(f"\nProfile: {args.profile}")
@@ -54,7 +69,7 @@ print("F1:", spacy_metrics["f1"])
 taivium_metrics, taivium_errors, taivium_cache_file = taivium_evaluation(dataset,
                                                                          comparable_golds,
                                                                          allowed_labels,
-                     args.max_errors, model_name="en_core_web_lg")
+                     args.max_errors, model_name=args.taivium_spacy_model_name)
 print("\n=== Taivium Pipeline Performance ===")
 print("Precision:", taivium_metrics["precision"])
 print("Recall:", taivium_metrics["recall"])
@@ -73,5 +88,7 @@ save_results(
     taivium_metrics,
     spacy_errors,
     taivium_errors,
-    taivium_cache_file
+    taivium_cache_file,
+    args.spacy_model_name,
+    args.taivium_spacy_model_name,
 )
