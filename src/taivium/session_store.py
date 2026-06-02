@@ -17,7 +17,7 @@ Usage::
     pipeline = Taivium(session_store=store)
 
     result = pipeline.process("Alice at alice@acme.com needs help.")
-    # mapping is persisted in Redis under key taivium:session:user-abc123:*
+    # mapping is persisted in Redis under key taivium:default:session:user-abc123:*
 """
 
 from __future__ import annotations
@@ -111,7 +111,7 @@ class RedisSessionStore:
 
     Every entry is stored as a JSON string under the key::
 
-        taivium:session:<session_id>:<entity_id>
+        taivium:<tenant_id>:session:<session_id>:<entity_id>
 
     Entries expire after *ttl* seconds (default 24 h) to prevent unbounded
     growth.  Pass ``ttl=None`` to disable expiry.
@@ -120,6 +120,8 @@ class RedisSessionStore:
         session_id: Unique identifier for the session (e.g. user ID, request
             correlation ID).  Used to namespace keys in Redis so that
             different sessions never collide.
+        tenant_id: Optional tenant identifier for multi-tenant isolation.
+            Defaults to ``"default"`` when not provided.
         redis_url: Redis connection URL (default ``"redis://localhost:6379"``).
             Supports ``redis://``, ``rediss://`` (TLS), and
             ``unix://`` socket URLs supported by ``redis-py``.
@@ -142,6 +144,7 @@ class RedisSessionStore:
     def __init__(
         self,
         session_id: str,
+        tenant_id: Optional[str] = None,
         redis_url: str = "redis://localhost:6379",
         ttl: Optional[int] = 86400,
     ) -> None:
@@ -154,7 +157,10 @@ class RedisSessionStore:
             ) from exc
 
         self._client = redis.from_url(redis_url, decode_responses=True)
-        self._prefix = f"taivium:session:{session_id}:"
+        resolved_tenant_id = (tenant_id or "default").strip() or "default"
+        self.tenant_id = resolved_tenant_id
+        self.session_id = session_id
+        self._prefix = f"taivium:{resolved_tenant_id}:session:{session_id}:"
         self._ttl = ttl
 
     # ------------------------------------------------------------------

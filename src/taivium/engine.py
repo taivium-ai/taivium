@@ -23,9 +23,11 @@ from enum import Enum
 from functools import lru_cache
 from typing import Any, Callable, cast, Dict, List, Optional, Tuple
 
+import os
+
 import spacy
 from .transformer import transformer_evidence
-from .session_store import InMemorySessionStore, SessionStore
+from .session_store import InMemorySessionStore, SessionStore, RedisSessionStore
 from .llm import llm_evidence
 from .audit_logger import log_audit_event
 
@@ -980,7 +982,7 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         llm_fn: Optional[Callable[[str], List[Evidence]]] = None,
         id_salt: Optional[str] = None,
         id_hash_len: int = 12,
-    ):  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    ):  # pylint: disable=too-many-arguments
         """
         id_salt: Optional string to scope entity IDs (tenant/session/namespace).
         id_hash_len: Number of hex digits to use from the hash (default 12 for 
@@ -1161,40 +1163,167 @@ def _options_key(parsed_options: Dict[str, Any]) -> Tuple[bool, bool, Optional[s
         # Do not include non-hashable objects like functions or custom classes
     )
 
+def _resolve_default_session_ttl(_logger: logging.Logger) -> int:
+    """Resolve default session TTL from SESSION_TTL_SECONDS with validation."""
+    ttl_str = os.getenv("SESSION_TTL_SECONDS", "86400")
+    try:
+        ttl = int(ttl_str)
+        if ttl <= 0:
+            raise ValueError("TTL must be > 0")
+        return ttl
+    except ValueError:
+        _logger.warning("Invalid SESSION_TTL_SECONDS: %s, using default 86400", ttl_str)
+        return 86400
+
+
+def _resolve_tenant_session_ttl(tenant_id: str, default_ttl: int, _logger: logging.Logger) -> int:
+    """Resolve per-tenant TTL override from TENANT_SESSION_TTL_SECONDS policy.
+
+    Environment format:
+        TENANT_SESSION_TTL_SECONDS='{"tenant-a": 1800, "tenant-b": 7200}'
+    """
+    policy_str = os.getenv("TENANT_SESSION_TTL_SECONDS", "").strip()
+    if not policy_str:
+        return default_ttl
+
+    try:
+        policy = json.loads(policy_str)
+    except json.JSONDecodeError as exc:
+        _logger.warning(
+            "Invalid TENANT_SESSION_TTL_SECONDS JSON: %s; using SESSION_TTL_SECONDS",
+            exc,
+        )
+        return default_ttl
+
+    if not isinstance(policy, dict):
+        _logger.warning(
+            "TENANT_SESSION_TTL_SECONDS must decode to a dict; got %s; using SESSION_TTL_SECONDS",
+            type(policy).__name__,
+        )
+        return default_ttl
+
+    tenant_ttl_raw = policy.get(tenant_id,None)
+    if tenant_ttl_raw is None:
+        return default_ttl
+
+    try:
+        tenant_ttl = int(tenant_ttl_raw)
+        if tenant_ttl <= 0:
+            raise ValueError("TTL must be > 0")
+        return tenant_ttl
+    except (TypeError, ValueError):
+        _logger.warning(
+            "Invalid tenant TTL override in TENANT_SESSION_TTL_SECONDS for tenant %s: %s; "
+            "falling back to SESSION_TTL_SECONDS",
+            tenant_id,
+            tenant_ttl_raw,
+        )
+        return default_ttl
+
+
+def _parse_module_engine_options(
+    options: Any,
+    _logger: logging.Logger,
+) -> Tuple[Optional[dict[str, Any]], Optional[str]]:
+    """Parse module-engine options into a dict and return (parsed, error)."""
+    if not options:
+        return {}, None
+
+    if isinstance(options, dict):
+        return cast(dict[str, Any], options), None
+
+    if isinstance(options, str):
+        try:
+            decoded = json.loads(options)
+        except json.JSONDecodeError as exc:
+            _logger.error("Failed to parse options JSON: %s", exc)
+            return None, f"Failed to parse options JSON: {exc}"
+
+        if not isinstance(decoded, dict):
+            decoded_type = type(decoded).__name__
+            _logger.error("Options JSON must decode to a dict; got %s", decoded_type)
+            return None, f"Options JSON must decode to a dict; got {decoded_type}"
+
+        return cast(dict[str, Any], decoded), None
+
+    options_type = type(options).__name__
+    _logger.error("Options must be a dict or JSON string, got %s", options_type)
+    return None, f"Options must be a dict or JSON string, got {options_type}"
+
+
+def _build_tenant_session_store(
+    tenant_id: Optional[str],
+    _logger: logging.Logger,
+) -> SessionStore:
+    """Create a tenant-aware session store, or in-memory fallback."""
+    if not tenant_id:
+        return InMemorySessionStore()
+
+    redis_url = os.getenv("REDIS_URL")
+    if not redis_url:
+        _logger.debug(
+            "tenant_id provided but REDIS_URL not configured; "
+            "using in-memory session store"
+        )
+        return InMemorySessionStore()
+
+    default_ttl = _resolve_default_session_ttl(_logger)
+    ttl = _resolve_tenant_session_ttl(str(tenant_id), default_ttl, _logger)
+    try:
+        session_store = RedisSessionStore(
+            session_id="tenant-session",  # Placeholder; unused in per-tenant mode
+            redis_url=redis_url,
+            ttl=ttl,
+            tenant_id=tenant_id,
+        )
+        _logger.info(
+            "Created per-tenant RedisSessionStore for tenant: %s (ttl=%ss)",
+            tenant_id,
+            ttl,
+        )
+        return session_store
+    except (OSError, IOError) as exc:
+        _logger.warning(
+            "Failed to create per-tenant RedisSessionStore for tenant %s: %s; "
+            "falling back to in-memory",
+            tenant_id,
+            exc,
+        )
+        return InMemorySessionStore()
+
 
 def module_engine_process(text: str, options: Any = None) -> "Dict[str, Any]":
     """
     Thread-safe, multi-config process function for gRPC server or programmatic use.
     Accepts options as a dict or JSON string. Caches Taivium instances by options for efficiency.
+    
+    Supports per-tenant session stores:
+    - If 'tenant_id' is in options, creates a RedisSessionStore with that tenant
+        - Uses SESSION_TTL_SECONDS as default TTL and optional
+            TENANT_SESSION_TTL_SECONDS JSON map for tenant overrides
+    - Falls back to InMemorySessionStore if Redis not configured
     """
     _logger = logging.getLogger("taivium.engine")
     _logger.info(
         "[DEBUG] process() called with text type: %s, options type: %s", 
         type(text).__name__, type(options).__name__)
 
-    parsed_options: dict[str, Any] = {}
-    if options:
-        if isinstance(options, dict):
-            parsed_options = cast(dict[str, Any], options)
-        elif isinstance(options, str):
-            try:
-                _decoded = json.loads(options)
-            except json.JSONDecodeError as exc:
-                _logger.error("Failed to parse options JSON: %s", exc)
-                return {"error": f"Failed to parse options JSON: {exc}"}
-            if not isinstance(_decoded, dict):
-                decoded_type = type(_decoded).__name__
-                _logger.error(
-                    "Options JSON must decode to a dict; got %s", decoded_type)
-                return {
-                    "error": f"Options JSON must decode to a dict; got {decoded_type}"}
-            parsed_options = cast(dict[str, Any], _decoded)
-        else:
-            options_type = type(options).__name__
-            _logger.error("Options must be a dict or JSON string, got %s",
-                         options_type)
-            return {
-                "error": f"Options must be a dict or JSON string, got {options_type}"}
+    parsed_options, options_error = _parse_module_engine_options(options, _logger)
+    if options_error is not None or parsed_options is None:
+        return {"error": options_error or "Unknown options parsing error"}
+
+    # Extract tenant_id if present (used for per-tenant session store and ID salt)
+    tenant_id = parsed_options.pop("tenant_id", None)
+    session_store = _build_tenant_session_store(tenant_id, _logger)
+    
+    # Use tenant_id as automatic id_salt if not explicitly provided by user
+    # This ensures different tenants get different anonymized IDs for the same content
+    if tenant_id and not parsed_options.get("id_salt"):
+        _logger.info(
+            "Using tenant_id %s as automatic id_salt for tenant-scoped anonymization",
+            tenant_id,
+        )
+        parsed_options["id_salt"] = tenant_id
 
     key = _options_key(parsed_options)
     with _engine_cache_lock:
@@ -1208,4 +1337,14 @@ def module_engine_process(text: str, options: Any = None) -> "Dict[str, Any]":
             # Not caching on transformer_fn/llm_fn for thread safety
             engine = Taivium(**taivium_args)
             _engine_cache[key] = engine
-    return engine.process(text)
+
+    # If per-tenant session store was created, temporarily set it on the engine
+    if tenant_id:
+        original_store = engine.session_store
+        engine.session_store = session_store
+        try:
+            return engine.process(text)
+        finally:
+            engine.session_store = original_store
+    else:
+        return engine.process(text)

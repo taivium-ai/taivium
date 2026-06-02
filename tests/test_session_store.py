@@ -189,6 +189,34 @@ class TestRedisSessionStore:
         assert store_b.get("PERSON_aaa") is None
         assert store_a.get("PERSON_aaa") is not None
 
+    def test_tenant_namespacing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Two stores with same session_id but different tenant_ids are isolated."""
+        fake_server = fakeredis.FakeServer()
+        fake_client = fakeredis.FakeRedis(server=fake_server, decode_responses=True)
+
+        import redis  # pylint: disable=import-outside-toplevel  # type: ignore[import]
+        monkeypatch.setattr(redis, "from_url", lambda *_a, **_kw: fake_client)
+
+        store_a = RedisSessionStore(session_id="shared-session", tenant_id="tenant-a")
+        store_b = RedisSessionStore(session_id="shared-session", tenant_id="tenant-b")
+
+        store_a.set("PERSON_aaa", {"text": "Alice"})
+        assert store_b.get("PERSON_aaa") is None
+        assert store_a.get("PERSON_aaa") is not None
+
+    def test_default_tenant_prefix(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Store defaults to tenant 'default' when tenant_id is not provided."""
+        fake_server = fakeredis.FakeServer()
+        fake_client = fakeredis.FakeRedis(server=fake_server, decode_responses=True)
+
+        import redis  # pylint: disable=import-outside-toplevel  # type: ignore[import]
+        monkeypatch.setattr(redis, "from_url", lambda *_a, **_kw: fake_client)
+
+        store = RedisSessionStore(session_id="test-session-001")
+        assert store.tenant_id == "default"
+        assert store.session_id == "test-session-001"
+        assert store._prefix.startswith("taivium:default:session:test-session-001:")
+
 
 # ---------------------------------------------------------------------------
 # Taivium + session store integration
