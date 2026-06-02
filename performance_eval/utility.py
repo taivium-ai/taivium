@@ -1,4 +1,5 @@
-'''Utility functions for performance evaluation, including deterministic cache file generation and results persistence.'''
+'''Utility functions for performance evaluation, including deterministic \
+    cache file generation and results persistence.'''
 import json
 import hashlib
 import subprocess
@@ -92,7 +93,8 @@ def check_git_clean(repo_path="."):
         status_output = result.stdout.strip()
         if status_output:
             raise ValueError(
-                f"Git working directory is not clean. Uncommitted changes detected:\n{status_output}"
+                f"Git working directory is not clean. \
+                    Uncommitted changes detected:\n{status_output}"
             )
         commit_hash = get_git_commit_hash(repo_path)
         return commit_hash
