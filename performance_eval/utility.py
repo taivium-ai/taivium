@@ -5,7 +5,11 @@ import numpy as np
 import hashlib
 import subprocess
 import logging
+from collections import Counter
 from pathlib import Path
+import matplotlib
+matplotlib.use("Agg")  # non-interactive backend for file output
+import matplotlib.pyplot as plt
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +157,36 @@ def compute_prf(tp, fp, fn):
     f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
     return precision, recall, f1
 
+def plot_label_distribution(comparable_golds, dataset_name, profile_name, save_path):
+    """Plot and save a bar chart of gold label counts from the evaluation split.
+
+    Args:
+        comparable_golds: List of (text, gold_spans_set) where each span is (start, end, label).
+        dataset_name: Dataset name string (used in title).
+        profile_name: Label profile name (used in title).
+        save_path: Path object where the PNG will be saved.
+    """
+    counts = Counter()
+    for _, spans in comparable_golds:
+        for _, _, label in spans:
+            counts[label] += 1
+
+    labels = sorted(counts.keys())
+    values = [counts[l] for l in labels]
+
+    fig, ax = plt.subplots(figsize=(max(6, len(labels) * 1.2), 5))
+    bars = ax.bar(labels, values, color="steelblue", edgecolor="white")
+    ax.bar_label(bars, padding=3)
+    ax.set_title(f"Label Distribution — {dataset_name} / {profile_name}")
+    ax.set_xlabel("Label")
+    ax.set_ylabel("Count (validation split)")
+    ax.set_ylim(0, max(values) * 1.15)
+    ax.spines[["top", "right"]].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150)
+    plt.close(fig)
+
+
 def calculate_delta(metrics1, metrics2):
     """Calculate the delta between two metrics."""
     delta = {
@@ -257,8 +291,8 @@ def print_delta_matrix_tables(settings_results):
             row_str = f"{row_name:<15} |"
             for j in range(n):
                 val = matrix[i][j]
-                # Highlight if it's the max absolute value and not zero
-                is_max = (abs(val) == max_val and val != 0) if max_val > 0 else False
+                # Highlight the best improvement (positive max delta only)
+                is_max = (abs(val) == max_val and val > 0) if max_val > 0 else False
                 marker = "⭐" if is_max else "  "
         
                 row_str += f" {val:>10.4f}{marker} |"
@@ -314,8 +348,8 @@ def format_delta_matrix_tables_as_text(settings_results):
             row_str = f"{row_name:<15} |"
             for j in range(n):
                 val = matrix[i][j]
-                # Highlight if it's the max absolute value and not zero
-                is_max = (abs(val) == max_val and val != 0) if max_val > 0 else False
+                # Highlight the best improvement (positive max delta only)
+                is_max = (abs(val) == max_val and val > 0) if max_val > 0 else False
                 marker = "⭐" if is_max else "  "
 
                 row_str += f" {val:>10.4f}{marker} |"
@@ -373,12 +407,12 @@ def save_evaluation_results(cache_file, detection_func_name, dataset, label_prof
         json.dump(json_data, f, indent=2)
 
     # Errors JSON (both timestamped and latest versions)
-    errors_json_path = cache_file.parent / f"{cache_file.stem}_{detection_func_name}_errors.json"
-    latest_errors_json_path = \
-        cache_file.parent / f"{cache_file.stem}_latest_{detection_func_name}_errors.json"
+    errors_json_path = cache_file.parent / f"{detection_func_name}_errors.json"
+    latest_errors_json_path = cache_file.parent / f"latest_{detection_func_name}_errors.json"
 
     errors_json_data = {
         "detection_func": detection_func_name,
+        "cache_name": cache_file.stem,
         "model_name": model_name,
         "dataset": dataset,
         "label_profile": label_profile,
@@ -389,6 +423,35 @@ def save_evaluation_results(cache_file, detection_func_name, dataset, label_prof
     for path in (errors_json_path, latest_errors_json_path):
         with open(path, "w", encoding="utf-8") as f:
             json.dump(errors_json_data, f, indent=2)
+
+    # Errors text file
+    errors_txt_path = cache_file.parent / f"{cache_file.stem}_{detection_func_name}_errors.txt"
+    latest_errors_txt_path = cache_file.parent / f"{cache_file.stem}_latest_{detection_func_name}_errors.txt"
+
+    lines = [
+        f"Errors Report for {detection_func_name}",
+        f"Cache Name: {cache_file.stem}",
+        f"Model Name: {model_name}",
+        f"Dataset: {dataset}",
+        f"Label Profile: {label_profile}",
+        f"Total Errors: {len(errors)}",
+        "=" * 80,
+    ]
+    for err in errors:
+        lines.append(f"\n[#{err['index']}] {err['text']}")
+        if err.get("false_positives"):
+            lines.append("  False Positives:")
+            for fp in err["false_positives"]:
+                lines.append(f"    [{fp[0]}:{fp[1]}] {fp[2]!r}  \"{err['text'][fp[0]:fp[1]]}\"")
+        if err.get("false_negatives"):
+            lines.append("  False Negatives:")
+            for fn in err["false_negatives"]:
+                lines.append(f"    [{fn[0]}:{fn[1]}] {fn[2]!r}  \"{err['text'][fn[0]:fn[1]]}\"")
+    errors_text = "\n".join(lines)
+
+    for path in (errors_txt_path, latest_errors_txt_path):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(errors_text)
 
 
 def save_delta_matrices(cache_file, settings_results):

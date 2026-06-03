@@ -1,0 +1,4 @@
+presidio_analyzer
+presidio_anonymizer
+matplotlib
+#python -m spacy download en_core_web_lg

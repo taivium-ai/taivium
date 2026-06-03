@@ -10,7 +10,8 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 from performance_eval.utility import print_delta_matrix_tables, \
-                                    save_evaluation_results, save_delta_matrices
+                                    save_evaluation_results, save_delta_matrices, \
+                                    plot_label_distribution
 from performance_eval.eval_datasets import DATASET_LIST, load_cached_dataset, LABEL_PROFILES
 from performance_eval.eval_reference import spacy_detection, taivium_detection, evaluation
 
@@ -44,6 +45,13 @@ print(f"Evaluating on dataset '{args.dataset}' with label profile '{args.profile
       (allowed labels: {', '.join(sorted(allowed_labels))})")
 
 dataset, ner_tag_names, comparable_golds = load_cached_dataset(args.dataset, allowed_labels)
+
+# Plot and save label distribution for the evaluation split
+_dist_path = __import__('pathlib').Path(__file__).parent / ".cache" / \
+    f"{args.dataset.replace('/', '_')}_{args.profile}_label_distribution.png"
+plot_label_distribution(comparable_golds, args.dataset, args.profile, _dist_path)
+print(f"Label distribution saved to: {_dist_path}")
+
 settings_results = \
     [
         {"metrics":{},"detection_func": spacy_detection, "spacy_model_name": "en_core_web_sm"},
@@ -81,3 +89,4 @@ if settings_results:
     delta_json_path, delta_txt_path = save_delta_matrices(first_cache_file, settings_results)
     print(f"\nDelta matrices saved to: {delta_json_path}")
     print(f"Delta matrices saved to: {delta_txt_path}")
+
