@@ -135,6 +135,21 @@ def _cell_class(value: float, highlight_positive: bool) -> str:
     return "good" if value < 0 else "bad"
 
 
+def _delta_cell_class(metric_name: str, delta_value: float | None) -> str:
+    """Determine cell class for delta columns based on metric type.
+    
+    F1 delta: positive is better (higher F1) → good
+    Timing delta: negative is better (faster) → good
+    """
+    if delta_value is None or delta_value == 0:
+        return "neutral"
+    if metric_name == "f1":
+        return "good" if delta_value > 0 else "bad"
+    elif metric_name == "timing":
+        return "good" if delta_value < 0 else "bad"
+    return "neutral"
+
+
 def _render_matrix(metric_name: str, data: dict[str, Any]) -> str:
     model_names = data.get("model_names", [])
     matrix = data.get("matrix", [])
@@ -309,6 +324,8 @@ def generate_html(cache_dir: Path, output_file: Path) -> None:
         timing_delta_text = (
             f"{timing_delta:+.2f}" if isinstance(timing_delta, (int, float)) else "-"
         )
+        f1_class = _delta_cell_class("f1", f1_delta)
+        timing_class = _delta_cell_class("timing", timing_delta)
         summary_rows.append(
             "<tr>"
             f"<td>{html.escape(row['detector'])}</td>"
@@ -316,9 +333,9 @@ def generate_html(cache_dir: Path, output_file: Path) -> None:
             f"<td>{_safe_float(metrics.get('precision'))}</td>"
             f"<td>{_safe_float(metrics.get('recall'))}</td>"
             f"<td>{_safe_float(metrics.get('f1'))}</td>"
-            f"<td>{html.escape(f1_delta_text)}</td>"
+            f'<td class="{f1_class}">{html.escape(f1_delta_text)}</td>'
             f"<td>{html.escape(str(row['timing_ms']))}</td>"
-            f"<td>{html.escape(timing_delta_text)}</td>"
+            f'<td class="{timing_class}">{html.escape(timing_delta_text)}</td>'
             "</tr>"
         )
 
@@ -406,8 +423,13 @@ def generate_html(cache_dir: Path, output_file: Path) -> None:
 </html>
 """
 
+    # Save to web folder
     output_file.parent.mkdir(parents=True, exist_ok=True)
     output_file.write_text(page, encoding="utf-8")
+
+    # Also save to .cache folder
+    cache_html_path = cache_dir / "latest_report.html"
+    cache_html_path.write_text(page, encoding="utf-8")
 
 
 def main() -> None:

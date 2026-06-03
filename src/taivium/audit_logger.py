@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import sys
 from datetime import datetime, timezone
 from typing import Iterable
 
@@ -48,7 +49,7 @@ def log_audit_event(
 
     try:
         logger.info(json.dumps(event))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OSError):
         # Audit logging must not break request handling.
         pass
 

@@ -28,6 +28,7 @@ load_dotenv(Path(PROJECT_ROOT) / ".env")
 from performance_eval.eval_datasets import DATASET_LIST, load_cached_dataset, LABEL_PROFILES
 from performance_eval.eval_reference import spacy_detection, taivium_detection, \
     presidio_detection, evaluation
+from performance_eval.generate_report_html import generate_html
 
 def main() -> None:
     configure_logging_from_env()
@@ -165,6 +166,16 @@ def main() -> None:
         delta_json_path, delta_txt_path = save_delta_matrices(first_cache_file, settings_results)
         print(f"\nDelta matrices saved to: {delta_json_path}")
         print(f"Delta matrices saved to: {delta_txt_path}")
+
+    # Generate HTML report
+    print("\nGenerating HTML report...")
+    try:
+        cache_dir = Path(__file__).parent / ".cache"
+        output_file = Path(__file__).parent.parent / "web" / "index.html"
+        generate_html(cache_dir, output_file)
+        print("HTML report generated successfully at: web/index.html")
+    except (FileNotFoundError, ValueError, OSError) as e:
+        print(f"Warning: Failed to generate HTML report: {e}")
 
 
 if __name__ == "__main__":

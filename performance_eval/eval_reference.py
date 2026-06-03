@@ -84,7 +84,7 @@ def spacy_detection(text, allowed_labels, model_name="en_core_web_lg"):
     # Load model only once, reuse on subsequent calls
     if model_name not in _spacy_models:
         print(f"Loading spaCy model for evaluation: {model_name}")
-        _spacy_models[model_name] = spacy.load(model_name, disable=[
+        _spacy_models[model_name] = spacy.load(model_name, exclude=[
         "tagger",
         "parser",
         "lemmatizer",
@@ -110,7 +110,7 @@ def get_optimized_presidio_engine(model_name: str = "en_core_web_lg") -> Analyze
     # (Just like you did in your native spaCy wrapper)
     nlp = spacy.load(
         model_name,
-        disable=["tagger", "parser", "lemmatizer", "attribute_ruler"]
+        exclude=["tagger", "parser", "lemmatizer", "attribute_ruler"]
     )
     
     # 2. Configure Presidio's underlying SpacyNlpEngine configuration manually

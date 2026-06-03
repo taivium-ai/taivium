@@ -76,7 +76,7 @@ def get_spacy_model(model_name: str = "en_core_web_sm") -> Any:
         # inference
         return spacy.load(
             model_name,
-            disable=[
+            exclude=[
                 "tagger",
                 "parser",
                 "lemmatizer",
