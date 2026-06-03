@@ -3,15 +3,19 @@ Reference evaluation using NER models. Provides a benchmark for
 Taivium's performance on the same datasets and label profiles.
 '''
 import logging
+import os
 import pickle
 import time
 import spacy
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor
 from functools import lru_cache
 from pathlib import Path
 from presidio_analyzer import AnalyzerEngine
 from taivium import Taivium
 from taivium.engine import normalize_label
 from presidio_analyzer.nlp_engine import SpacyNlpEngine
+from tqdm import tqdm
 from .utility import compute_prf, cache_file_from_payload, get_git_commit_hash
 
 logger = logging.getLogger(__name__)
@@ -30,6 +34,35 @@ _PRESIDIO_LABEL_MAP = {
     "EMAIL_ADDRESS": "EMAIL",
     "PHONE_NUMBER": "PHONE",
 }
+
+
+def _evaluate_single_sample(task):
+    """Worker task for multiprocessing evaluation."""
+    idx, text, comparable_gold, detection_name, allowed_labels, model_name = task
+    detection_fn = globals().get(detection_name)
+    if detection_fn is None:
+        raise ValueError(f"Unknown detection function: {detection_name}")
+
+    pred_spans = detection_fn(text, allowed_labels, model_name=model_name)
+    fp_set = pred_spans - comparable_gold
+    fn_set = comparable_gold - pred_spans
+
+    error = None
+    if fp_set or fn_set:
+        error = {
+            "index": idx,
+            "text": text,
+            "false_positives": sorted(fp_set),
+            "false_negatives": sorted(fn_set),
+        }
+
+    return (
+        len(pred_spans & comparable_gold),
+        len(fp_set),
+        len(fn_set),
+        error,
+        mp.current_process().name,
+    )
 
 def taivium_detection(text, allowed_labels, model_name="en_core_web_sm"):
     '''Detect entities in text using Taivium. Returns a set of (start, end, label) spans.'''
@@ -116,7 +149,8 @@ def presidio_anonymization_detection(text, allowed_labels, model_name="en_core_w
 
 
 def evaluation(detection, dataset, comparable_golds, allowed_labels,
-                     max_errors, model_name="en_core_web_lg", shared_cache_name=None):
+                     max_errors, model_name="en_core_web_lg", shared_cache_name=None,
+                     workers=None, chunksize=64, show_worker_progress=False):
     '''Evaluate NER performance on the dataset. 
     Returns TP, FP, FN counts and error samples.'''
 
@@ -152,34 +186,83 @@ def evaluation(detection, dataset, comparable_golds, allowed_labels,
         return metrics, errors, cache_file, total_time, n_samples
 
     tp = fp = fn = 0
-    errors = []
+    all_errors = []
     t_start = time.perf_counter()
-    # -------  start evaluation loop -------
-    for idx, _ in enumerate(dataset["validation"]):
-        # -------  Golden ground truth -------
-        text, comparable_gold = comparable_golds[idx]
 
-        # --- spaCy span-based evaluation (normalize labels to match gold) ---
-        pred_spans = detection(text,allowed_labels, model_name=model_name)
+    n_samples = len(comparable_golds)
+    max_workers = workers if isinstance(workers, int) and workers > 0 else max(1, (os.cpu_count() or 2) - 1)
 
-        fp_set = pred_spans - comparable_gold
-        fn_set = comparable_gold - pred_spans
-        tp += len(pred_spans & comparable_gold)
-        fp += len(fp_set)
-        fn += len(fn_set)
-        if (fp_set or fn_set) and len(errors) < max_errors:
-            errors.append(
-                {
-                    "index": idx,
-                    "text": text,
-                    "false_positives": sorted(fp_set),
-                    "false_negatives": sorted(fn_set),
-                }
+    # Multiprocessing gives substantial speedup on large datasets.
+    if max_workers > 1 and n_samples > 1:
+        tasks = [
+            (idx, text, comparable_gold, detection.__name__, allowed_labels, model_name)
+            for idx, (text, comparable_gold) in enumerate(comparable_golds)
+        ]
+        overall_bar = None
+        worker_bars = {}
+        if show_worker_progress:
+            overall_bar = tqdm(total=n_samples, desc=f"{detection.__name__} total", position=0)
+        with ProcessPoolExecutor(
+            max_workers=max_workers,
+            mp_context=mp.get_context("spawn"),
+        ) as executor:
+            try:
+                for tp_i, fp_i, fn_i, error, worker_name in executor.map(
+                    _evaluate_single_sample,
+                    tasks,
+                    chunksize=max(1, int(chunksize)),
+                ):
+                    tp += tp_i
+                    fp += fp_i
+                    fn += fn_i
+                    if error is not None:
+                        all_errors.append(error)
+
+                    if show_worker_progress:
+                        if worker_name not in worker_bars:
+                            worker_bars[worker_name] = tqdm(
+                                total=0,
+                                desc=worker_name,
+                                position=len(worker_bars) + 1,
+                                leave=False,
+                                bar_format="{desc}: {n_fmt} samples",
+                            )
+                        worker_bars[worker_name].update(1)
+                        if overall_bar is not None:
+                            overall_bar.update(1)
+            finally:
+                if overall_bar is not None:
+                    overall_bar.close()
+                for bar in worker_bars.values():
+                    bar.close()
+    else:
+        iter_rows = enumerate(comparable_golds)
+        if show_worker_progress:
+            iter_rows = enumerate(
+                tqdm(comparable_golds, total=n_samples, desc=f"{detection.__name__} total")
             )
+
+        for idx, (text, comparable_gold) in iter_rows:
+            pred_spans = detection(text, allowed_labels, model_name=model_name)
+            fp_set = pred_spans - comparable_gold
+            fn_set = comparable_gold - pred_spans
+            tp += len(pred_spans & comparable_gold)
+            fp += len(fp_set)
+            fn += len(fn_set)
+            if fp_set or fn_set:
+                all_errors.append(
+                    {
+                        "index": idx,
+                        "text": text,
+                        "false_positives": sorted(fp_set),
+                        "false_negatives": sorted(fn_set),
+                    }
+                )
+
+    errors = all_errors[:max_errors]
     p, r, f1 = compute_prf(tp, fp, fn)
     metrics = {"precision": p, "recall": r, "f1": f1}
     total_time = time.perf_counter() - t_start
-    n_samples = len(comparable_golds)
 
     # Save to pickle cache
     logger.warning(f"Saving spaCy evaluation to cache: {cache_file}")

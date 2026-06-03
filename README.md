@@ -274,6 +274,89 @@ result = module_engine_process(
 
 ---
 
+## Environment Configuration
+
+Taivium respects environment variables for logging and audit control. **Your application is responsible** for loading `.env` and configuring logging — Taivium itself does not call `logging.basicConfig()` (library best practice).
+
+### Controlling Logger Output
+
+**In your application code** (before importing Taivium):
+
+```python
+import logging
+
+# Suppress engine logs
+logging.getLogger("taivium.engine").setLevel(logging.WARNING)
+
+# Suppress audit logs
+logging.getLogger("taivium.audit").setLevel(logging.WARNING)
+
+# Or configure all loggers at once
+logging.basicConfig(level=logging.WARNING)
+
+from taivium.engine import Taivium
+pipeline = Taivium()
+```
+
+### Audit Output Control
+
+Disable audit JSON emission to stdout:
+
+```python
+import os
+os.environ["TAIVIUM_AUDIT_STDOUT"] = "0"
+
+from taivium.engine import Taivium
+pipeline = Taivium()
+```
+
+Or via shell:
+
+```bash
+export TAIVIUM_AUDIT_STDOUT=0
+python your_app.py
+```
+
+Allowed values: `0`, `false`, `off`, `no`.  
+Default: `1` (enabled).
+
+### Example: Loading `.env` in Your App
+
+If you want to use `.env` files for configuration:
+
+```python
+import os
+import logging
+from pathlib import Path
+
+# Load .env (your app's responsibility)
+def load_dotenv(path: Path) -> None:
+    if not path.is_file():
+        return
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+load_dotenv(Path(__file__).parent / ".env")
+
+# Your app configures logging
+level = getattr(logging, os.getenv("LOG_LEVEL", "WARNING"))
+logging.basicConfig(level=level)
+
+# Now use Taivium
+from taivium.engine import Taivium
+pipeline = Taivium()
+```
+
+---
+
 ## What Gets Detected
 
 | Entity Type | Examples |
