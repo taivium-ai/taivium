@@ -1,6 +1,7 @@
 '''Utility functions for performance evaluation, including deterministic \
     cache file generation and results persistence.'''
 import json
+import datetime as dt
 import numpy as np
 import hashlib
 import subprocess
@@ -13,6 +14,11 @@ matplotlib.use("Agg")  # non-interactive backend for file output
 import matplotlib.pyplot as plt
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_dataset_name(dataset: str) -> str:
+    """Normalize dataset names for filesystem-safe artifacts."""
+    return dataset.replace("/", "_")
 
 
 def load_dotenv(path: Path) -> None:
@@ -68,8 +74,185 @@ def get_label_distribution_path(module_file: str, dataset: str, profile: str) ->
     """
     cache_dir = Path(module_file).parent / ".cache"
     cache_dir.mkdir(exist_ok=True)
-    safe_dataset = dataset.replace("/", "_")
+    safe_dataset = _safe_dataset_name(dataset)
     return cache_dir / f"{safe_dataset}_{profile}_label_distribution.png"
+
+
+def get_performance_history_path(module_file: str, dataset: str, profile: str) -> Path:
+    """Return JSON path storing evaluation history for trend analysis."""
+    cache_dir = Path(module_file).parent / ".cache"
+    cache_dir.mkdir(exist_ok=True)
+    safe_dataset = _safe_dataset_name(dataset)
+    return cache_dir / f"{safe_dataset}_{profile}_performance_history.json"
+
+
+def get_performance_trend_plot_path(module_file: str, dataset: str, profile: str) -> Path:
+    """Return PNG path for performance trend charts."""
+    cache_dir = Path(module_file).parent / ".cache"
+    cache_dir.mkdir(exist_ok=True)
+    safe_dataset = _safe_dataset_name(dataset)
+    return cache_dir / f"{safe_dataset}_{profile}_performance_trend.png"
+
+
+def _model_run_label(settings_entry: dict) -> str:
+    """Build canonical model label for trend tracking."""
+    return f"{settings_entry['detection_func'].__name__} ({settings_entry['spacy_model_name']})"
+
+
+def update_performance_history(module_file: str,
+                               dataset: str,
+                               profile: str,
+                               settings_results,
+                               max_history: int = 40):
+    """Append latest run metrics to history and persist to disk.
+
+    Returns:
+        Tuple of (history_path, history_list)
+    """
+    history_path = get_performance_history_path(module_file, dataset, profile)
+
+    history = []
+    if history_path.exists():
+        try:
+            with open(history_path, "r", encoding="utf-8") as history_file:
+                loaded = json.load(history_file)
+            if isinstance(loaded, list):
+                history = loaded
+        except (OSError, json.JSONDecodeError):
+            logger.warning("Could not read performance history from %s", history_path)
+
+    models = {}
+    for entry in settings_results:
+        metrics = entry.get("metrics", {})
+        total_time = entry.get("total_time")
+        n_samples = entry.get("n_samples")
+        timing_ms = None
+        if total_time is not None and n_samples:
+            timing_ms = (total_time / n_samples) * 1000
+
+        model_label = _model_run_label(entry)
+        models[model_label] = {
+            "precision": metrics.get("precision"),
+            "recall": metrics.get("recall"),
+            "f1": metrics.get("f1"),
+            "timing_ms": timing_ms,
+        }
+
+    run_entry = {
+        "timestamp": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "dataset": dataset,
+        "profile": profile,
+        "models": models,
+    }
+
+    history.append(run_entry)
+    if len(history) > max_history:
+        history = history[-max_history:]
+
+    with open(history_path, "w", encoding="utf-8") as history_file:
+        json.dump(history, history_file, indent=2)
+
+    return history_path, history
+
+
+def print_performance_trend(history) -> None:
+    """Print metric deltas versus the previous run for each model."""
+    print(f"\n{'='*80}")
+    print("Performance Trend (vs previous run):")
+
+    if len(history) < 2:
+        print("  Not enough history yet. Run evaluation again to see trend deltas.")
+        print(f"{'='*80}")
+        return
+
+    previous = history[-2].get("models", {})
+    current = history[-1].get("models", {})
+
+    print(f"  {'Model':<45} {'dP':>8} {'dR':>8} {'dF1':>8} {'dT(ms)':>10}")
+    print(f"  {'-'*45} {'-'*8} {'-'*8} {'-'*8} {'-'*10}")
+
+    def _delta(curr, prev):
+        if curr is None or prev is None:
+            return None
+        return curr - prev
+
+    for model_name in sorted(current.keys()):
+        curr = current[model_name]
+        prev = previous.get(model_name, {})
+
+        d_precision = _delta(curr.get("precision"), prev.get("precision"))
+        d_recall = _delta(curr.get("recall"), prev.get("recall"))
+        d_f1 = _delta(curr.get("f1"), prev.get("f1"))
+        d_timing = _delta(curr.get("timing_ms"), prev.get("timing_ms"))
+
+        def _fmt(value):
+            return f"{value:+.4f}" if value is not None else "   n/a "
+
+        def _fmt_t(value):
+            return f"{value:+.2f}" if value is not None else "    n/a"
+
+        print(
+            f"  {model_name:<45} {_fmt(d_precision):>8} {_fmt(d_recall):>8} "
+            f"{_fmt(d_f1):>8} {_fmt_t(d_timing):>10}"
+        )
+
+    print("  Note: negative dT(ms) means faster than previous run.")
+    print(f"{'='*80}")
+
+
+def save_performance_trend_plot(history, save_path: Path) -> bool:
+    """Save trend plot for F1 and latency across historical runs.
+
+    Returns:
+        True if a plot was generated, else False.
+    """
+    if not history:
+        return False
+
+    model_names = sorted({model for run in history for model in run.get("models", {}).keys()})
+    if not model_names:
+        return False
+
+    x = np.arange(len(history))
+    f1_series = {name: [] for name in model_names}
+    timing_series = {name: [] for name in model_names}
+    tick_labels = [run.get("timestamp", "")[-9:-1] or f"run-{i + 1}" for i, run in enumerate(history)]
+
+    for run in history:
+        models = run.get("models", {})
+        for name in model_names:
+            model_data = models.get(name, {})
+            f1_val = model_data.get("f1")
+            timing_val = model_data.get("timing_ms")
+            f1_series[name].append(np.nan if f1_val is None else float(f1_val))
+            timing_series[name].append(np.nan if timing_val is None else float(timing_val))
+
+    fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+    ax_f1, ax_timing = axes
+
+    for name in model_names:
+        ax_f1.plot(x, f1_series[name], marker="o", linewidth=1.5, label=name)
+        ax_timing.plot(x, timing_series[name], marker="o", linewidth=1.5, label=name)
+
+    ax_f1.set_title("Performance Trend Across Runs")
+    ax_f1.set_ylabel("F1")
+    ax_f1.grid(alpha=0.25)
+    ax_f1.set_ylim(0, 1)
+
+    ax_timing.set_ylabel("Avg latency (ms/sample)")
+    ax_timing.set_xlabel("Run")
+    ax_timing.grid(alpha=0.25)
+
+    ax_timing.set_xticks(x)
+    ax_timing.set_xticklabels(tick_labels, rotation=35, ha="right")
+
+    # Put legend once to avoid visual clutter.
+    ax_f1.legend(loc="upper left", fontsize=8, ncol=2)
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150)
+    plt.close(fig)
+    return True
 
 
 def _stable_serialize(value):

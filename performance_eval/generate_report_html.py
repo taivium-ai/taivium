@@ -13,6 +13,7 @@ import html
 import json
 import pickle
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -163,6 +164,25 @@ def _render_matrix(metric_name: str, data: dict[str, Any]) -> str:
         f"<tbody>{''.join(rows)}</tbody>"
         "</table></div></section>"
     )
+
+
+def _trend_plot_filename(dataset: str, profile: str) -> str:
+    safe_dataset = dataset.replace("/", "_")
+    return f"{safe_dataset}_{profile}_performance_trend.png"
+
+
+def _copy_trend_plot_if_exists(
+    cache_dir: Path, output_file: Path, dataset: str, profile: str
+) -> str | None:
+    source = cache_dir / _trend_plot_filename(dataset, profile)
+    if not source.exists():
+        return None
+
+    assets_dir = output_file.parent / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    target = assets_dir / source.name
+    shutil.copy2(source, target)
+    return f"assets/{source.name}"
 
 
 def generate_html(cache_dir: Path, output_file: Path) -> None:

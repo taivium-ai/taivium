@@ -18,7 +18,11 @@ from performance_eval.utility import print_delta_matrix_tables, \
                                     plot_label_distribution, print_timing_summary, \
                                     cache_file_from_payload, get_git_commit_hash, \
                                     load_dotenv, configure_logging_from_env, \
-                                    get_label_distribution_path
+                                    get_label_distribution_path, \
+                                    update_performance_history, \
+                                    print_performance_trend, \
+                                    get_performance_trend_plot_path, \
+                                    save_performance_trend_plot
 
 load_dotenv(Path(PROJECT_ROOT) / ".env")
 from performance_eval.eval_datasets import DATASET_LIST, load_cached_dataset, LABEL_PROFILES
@@ -60,6 +64,11 @@ def main() -> None:
         "--no-worker-progress",
         action="store_true",
         help="Disable per-worker progress bars during multiprocessing evaluation.",
+    )
+    parser.add_argument(
+        "--no-trend",
+        action="store_true",
+        help="Disable performance history updates and trend chart generation.",
     )
 
     args, _ = parser.parse_known_args()
@@ -137,6 +146,20 @@ def main() -> None:
 
     # Print timing summary
     print_timing_summary(settings_results)
+
+    if args.no_trend:
+        print("Performance trend recording disabled via --no-trend")
+    else:
+        # Update persistent history and print trend deltas vs previous run.
+        history_path, history = update_performance_history(
+            __file__, args.dataset, args.profile, settings_results
+        )
+        print(f"Performance history updated: {history_path}")
+        print_performance_trend(history)
+
+        trend_plot_path = get_performance_trend_plot_path(__file__, args.dataset, args.profile)
+        if save_performance_trend_plot(history, trend_plot_path):
+            print(f"Performance trend plot saved to: {trend_plot_path}")
 
     # Save delta matrices to JSON and text formats
     if settings_results:
