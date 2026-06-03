@@ -1,10 +1,10 @@
 '''Utility functions for performance evaluation, including deterministic \
     cache file generation and results persistence.'''
 import json
+import numpy as np
 import hashlib
 import subprocess
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ def cache_file_from_payload(module_file, payload, cache_subdir=".cache", suffix=
     """Return a deterministic cache file path for the given payload."""
     cache_dir = Path(module_file).parent / cache_subdir
     if not cache_dir.exists():
-        logger.warning(f"Creating cache directory: {cache_dir}")
+        logger.warning("Creating cache directory: %s", cache_dir)
     cache_dir.mkdir(exist_ok=True)
     stable_payload = _stable_serialize(payload)
     cache_key = json.dumps(stable_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
@@ -125,7 +125,7 @@ def conll_to_gold_spans(example, ner_tag_names, label_map):
         if tag.startswith("B-"):
             if start_idx is not None and label is not None:
                 end_char = char_offsets[i - 1] + len(words[i - 1])
-                gold_spans.add((char_offsets[start_idx], end_char, label))
+                gold_spans.add((char_offsets[int(start_idx)], end_char, label))
             start_idx = i
             label = mapped_label
 
@@ -135,13 +135,13 @@ def conll_to_gold_spans(example, ner_tag_names, label_map):
         else:  # "O"
             if start_idx is not None and label is not None:
                 end_char = char_offsets[i - 1] + len(words[i - 1])
-                gold_spans.add((char_offsets[start_idx], end_char, label))
+                gold_spans.add((char_offsets[int(start_idx)], end_char, label))
             start_idx = None
             label = None
 
     if start_idx is not None and label is not None:
         end_char = char_offsets[len(words) - 1] + len(words[-1])
-        gold_spans.add((char_offsets[start_idx], end_char, label))
+        gold_spans.add((char_offsets[int(start_idx)], end_char, label))
 
     return text, gold_spans
 
@@ -171,18 +171,21 @@ def get_delta_matrix_tables(settings_results):
     Cell value: delta of metric when j - i
     Returns a dictionary with matrices data.
     """
-    import numpy as np
-    
     n = len(settings_results)
-    model_names = [f"{s['detection_func'].__name__} ({s['spacy_model_name']})" for s in settings_results]
-    
+    short_names = [f"{s['detection_func'].__name__} ({s['spacy_model_name']})" 
+                   for s in settings_results]
+    full_names = [
+        f"{s['detection_func'].__name__} ({s['spacy_model_name']}) [{s['cache_file'].stem if 'cache_file' in s and s['cache_file'] else 'no-cache'}]"
+        for s in settings_results
+    ]
+
     metrics_to_display = ["precision", "recall", "f1"]
     matrices_data = {}
-    
+
     for metric_name in metrics_to_display:
         # Initialize matrix
         matrix = np.zeros((n, n))
-        
+
         # Fill matrix with deltas
         for i in range(n):
             for j in range(n):
@@ -194,18 +197,19 @@ def get_delta_matrix_tables(settings_results):
                         settings_results[i]["metrics"]
                     )
                     matrix[i][j] = delta[metric_name]
-        
+
         # Find max value for highlighting (excluding diagonal)
         mask = ~np.eye(n, dtype=bool)
         max_val = np.max(np.abs(matrix[mask])) if np.any(mask) else 0
-        
+
         # Store matrix data
         matrices_data[metric_name] = {
-            "model_names": model_names,
+            "model_names": short_names,
+            "model_legend": full_names,
             "matrix": matrix.tolist(),
             "max_absolute_value": float(max_val)
         }
-    
+
     return matrices_data
 
 
@@ -218,30 +222,36 @@ def print_delta_matrix_tables(settings_results):
     Highest values in each metric are highlighted.
     Each detection is labeled with its detection function name and spacy model name.
     """
-    import numpy as np
-    
+
     matrices_data = get_delta_matrix_tables(settings_results)
     metrics_to_display = ["precision", "recall", "f1"]
-    
+
+    # Print legend (cache mapping) once before all tables
+    legend = matrices_data[metrics_to_display[0]]["model_legend"]
+    print(f"\n{'='*80}")
+    print("Model Legend:")
+    for entry in legend:
+        print(f"  {entry}")
+
     for metric_name in metrics_to_display:
         data = matrices_data[metric_name]
         model_names = data["model_names"]
         matrix = np.array(data["matrix"])
         max_val = data["max_absolute_value"]
         n = len(model_names)
-        
+
         # Print table header
         print(f"\n{'='*80}")
         print(f"DELTA {metric_name.upper()} - Rows (baseline) vs Columns (comparison)")
         print(f"{'='*80}")
-        
+
         # Print column headers
         header = f"{'Baseline':<15} |"
         for col_name in model_names:
             header += f" {col_name:>12} |"
         print(header)
         print("-" * len(header))
-        
+
         # Print rows
         for i, row_name in enumerate(model_names):
             row_str = f"{row_name:<15} |"
@@ -250,10 +260,10 @@ def print_delta_matrix_tables(settings_results):
                 # Highlight if it's the max absolute value and not zero
                 is_max = (abs(val) == max_val and val != 0) if max_val > 0 else False
                 marker = "⭐" if is_max else "  "
-                
+        
                 row_str += f" {val:>10.4f}{marker} |"
             print(row_str)
-        
+
         print("=" * len(header))
 
 
@@ -266,32 +276,39 @@ def format_delta_matrix_tables_as_text(settings_results):
     Highest values in each metric are highlighted with ⭐.
     Each detection is labeled with its detection function name and spacy model name.
     """
-    import numpy as np
-    
+
     matrices_data = get_delta_matrix_tables(settings_results)
     metrics_to_display = ["precision", "recall", "f1"]
-    
+
     output_lines = []
-    
+
+    # Print legend (cache mapping) once before all tables
+    legend = matrices_data[metrics_to_display[0]]["model_legend"]
+    output_lines.append(f"\n{'='*80}")
+    output_lines.append("Model Legend:")
+    for entry in legend:
+        output_lines.append(f"  {entry}")
+
     for metric_name in metrics_to_display:
         data = matrices_data[metric_name]
         model_names = data["model_names"]
         matrix = np.array(data["matrix"])
         max_val = data["max_absolute_value"]
         n = len(model_names)
-        
+
         # Table header
         output_lines.append(f"\n{'='*80}")
-        output_lines.append(f"DELTA {metric_name.upper()} - Rows (baseline) vs Columns (comparison)")
+        output_lines.append(
+            f"DELTA {metric_name.upper()} - Rows (baseline) vs Columns (comparison)")
         output_lines.append(f"{'='*80}")
-        
+
         # Column headers
         header = f"{'Baseline':<15} |"
         for col_name in model_names:
             header += f" {col_name:>12} |"
         output_lines.append(header)
         output_lines.append("-" * len(header))
-        
+
         # Rows
         for i, row_name in enumerate(model_names):
             row_str = f"{row_name:<15} |"
@@ -300,16 +317,16 @@ def format_delta_matrix_tables_as_text(settings_results):
                 # Highlight if it's the max absolute value and not zero
                 is_max = (abs(val) == max_val and val != 0) if max_val > 0 else False
                 marker = "⭐" if is_max else "  "
-                
+
                 row_str += f" {val:>10.4f}{marker} |"
             output_lines.append(row_str)
-        
+
         output_lines.append("=" * len(header))
-    
+
     return "\n".join(output_lines)
 
 
-def save_evaluation_results(cache_file, detection_func_name, dataset, label_profile, 
+def save_evaluation_results(cache_file, detection_func_name, dataset, label_profile,
                            allowed_labels, model_name, metrics, errors):
     """Save evaluation results (report, metrics JSON, and errors JSON).
     
@@ -323,8 +340,6 @@ def save_evaluation_results(cache_file, detection_func_name, dataset, label_prof
         metrics: Dict with 'precision', 'recall', 'f1' keys
         errors: List of error dicts with 'index', 'text', 'false_positives', 'false_negatives'
     """
-    import json
-    
     # Report text file
     report_path = cache_file.parent / f"{cache_file.stem}_{detection_func_name}_report.txt"
     with open(report_path, "w", encoding="utf-8") as f:
@@ -338,7 +353,7 @@ def save_evaluation_results(cache_file, detection_func_name, dataset, label_prof
         f.write(f"Precision: {metrics['precision']:.12f}\n")
         f.write(f"Recall:    {metrics['recall']:.12f}\n")
         f.write(f"F1 Score:  {metrics['f1']:.12f}\n")
-    
+
     # Metrics JSON
     json_path = cache_file.parent / f"{cache_file.stem}_{detection_func_name}_report.json"
     json_data = {
@@ -356,11 +371,12 @@ def save_evaluation_results(cache_file, detection_func_name, dataset, label_prof
     }
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(json_data, f, indent=2)
-    
+
     # Errors JSON (both timestamped and latest versions)
     errors_json_path = cache_file.parent / f"{cache_file.stem}_{detection_func_name}_errors.json"
-    latest_errors_json_path = cache_file.parent / f"{cache_file.stem}_latest_{detection_func_name}_errors.json"
-    
+    latest_errors_json_path = \
+        cache_file.parent / f"{cache_file.stem}_latest_{detection_func_name}_errors.json"
+
     errors_json_data = {
         "detection_func": detection_func_name,
         "model_name": model_name,
@@ -369,10 +385,42 @@ def save_evaluation_results(cache_file, detection_func_name, dataset, label_prof
         "total_errors": len(errors),
         "errors": errors
     }
-    
+
     for path in (errors_json_path, latest_errors_json_path):
         with open(path, "w", encoding="utf-8") as f:
             json.dump(errors_json_data, f, indent=2)
 
 
+def save_delta_matrices(cache_file, settings_results):
+    """Save delta matrices in both JSON and text formats.
+    
+    Args:
+        cache_file: Path object for the cache file
+        settings_results: List of dicts with evaluation results and metrics
+    
+    Returns:
+        Tuple of (delta_json_path, delta_txt_path) Path objects
+    """
 
+    matrices_data = get_delta_matrix_tables(settings_results)
+
+    delta_matrices_json = {
+        "precision": matrices_data["precision"],
+        "recall": matrices_data["recall"],
+        "f1": matrices_data["f1"],
+        "note": "Rows are baseline models, columns are comparison models. "
+                    + "Cell value = delta (column - row)"
+    }
+
+    # Save JSON
+    delta_json_path = cache_file.parent / f"{cache_file.stem}_delta_matrices.json"
+    with open(delta_json_path, "w", encoding="utf-8") as f:
+        json.dump(delta_matrices_json, f, indent=2)
+
+    # Save text format
+    delta_text = format_delta_matrix_tables_as_text(settings_results)
+    delta_txt_path = cache_file.parent / f"{cache_file.stem}_delta_matrices.txt"
+    with open(delta_txt_path, "w", encoding="utf-8") as f:
+        f.write(delta_text)
+
+    return delta_json_path, delta_txt_path
