@@ -31,6 +31,12 @@ _PRESIDIO_LABEL_MAP = {
     "LOCATION": "LOCATION",
     "EMAIL_ADDRESS": "EMAIL",
     "PHONE_NUMBER": "PHONE",
+    "DATE_TIME": "DATE",
+    "IP_ADDRESS": "IP",
+    "US_SSN": "SOCIALNUMBER",
+    "USERNAME": "USERNAME",
+    "CREDIT_CARD": "SOCIALNUMBER",
+    "CRYPTO": "SOCIALNUMBER",
 }
 
 
@@ -159,8 +165,7 @@ def evaluation(detection, dataset, comparable_golds, allowed_labels,
 
     # Check if cache exists
     if cache_file.exists():
-        logger.warning(
-            f"Loading evaluation from cache: {cache_file}")
+        logger.warning("Loading evaluation from cache: %s", cache_file)
         with open(cache_file, 'rb') as f:
             cached = pickle.load(f)
         # Support old cache format (metrics, errors) and new (metrics, errors, total_time, n)
@@ -251,7 +256,7 @@ def evaluation(detection, dataset, comparable_golds, allowed_labels,
     total_time = time.perf_counter() - t_start
 
     # Save to pickle cache
-    logger.warning(f"Saving spaCy evaluation to cache: {cache_file}")
+    logger.warning("Saving spaCy evaluation to cache: %s", cache_file)
     with open(cache_file, 'wb') as f:
         pickle.dump((metrics, errors, total_time, n_samples), f)
 

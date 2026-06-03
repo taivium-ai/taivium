@@ -149,6 +149,17 @@ EMAIL_REGEX = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
 PHONE_REGEX = re.compile(r"\+?\d[\d\s\-]{7,}\d")
 API_KEY_REGEX = re.compile(
     r"(sk-[a-zA-Z0-9]{10,}|api[_-]?key\s*[:=]\s*[a-zA-Z0-9]+)", re.I)
+IP_REGEX = re.compile(
+    r"\b(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
+    r"(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\b"
+)
+DATE_REGEX = re.compile(
+    r"\b(?:"
+    r"\d{4}[-/]\d{1,2}[-/]\d{1,2}"
+    r"|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}"
+    r")\b"
+)
+SOCIALNUMBER_REGEX = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
 
 
 # -----------------------------
@@ -166,12 +177,12 @@ def normalize_label(label: str) -> str:
 
     mapping = {
         # 1. Map spaCy base elements directly to explicit schema requirements
-        "GPE": "COUNTRY",       # Geopolitical entities are almost always Countries/States
+        "GPE": "LOCATION",       # Geopolitical entities are almost always Countries/States
         "LOC": "LOCATION",      # General fallback
         
         # 2. Correct internal Regex outputs to match the evaluation schema keys
-        "PHONE": "TEL",          # The evaluation schema expects 'TEL', not 'PHONE'
-        "PHONE_NUMBER": "TEL",
+        "PHONE": "PHONE",           # Already in canonical form.
+        "PHONE_NUMBER": "PHONE",
         "EMAIL_ADDRESS": "EMAIL",
         
         # 3. Align technical/infrastructure keys out to evaluation targets
@@ -218,6 +229,8 @@ def spacy_evidence(text: str, model_name: str = "en_core_web_sm") -> List[Eviden
 def regex_evidence(text: str) -> List[Evidence]:
     """
     Collects high-confidence evidence from regex-based PII/secret patterns.
+
+    Covered patterns: EMAIL, PHONE, API_KEY, IP, DATE, SOCIALNUMBER.
     """
     evidence: List[Evidence] = []
 
@@ -229,6 +242,15 @@ def regex_evidence(text: str) -> List[Evidence]:
 
     for m in API_KEY_REGEX.finditer(text):
         evidence.append(Evidence(m.start(), m.end(), "API_KEY", "regex", 0.95))
+
+    for m in IP_REGEX.finditer(text):
+        evidence.append(Evidence(m.start(), m.end(), "IP", "regex", 0.88))
+
+    for m in DATE_REGEX.finditer(text):
+        evidence.append(Evidence(m.start(), m.end(), "DATE", "regex", 0.75))
+
+    for m in SOCIALNUMBER_REGEX.finditer(text):
+        evidence.append(Evidence(m.start(), m.end(), "SOCIALNUMBER", "regex", 0.93))
 
     return evidence
 

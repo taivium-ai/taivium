@@ -59,7 +59,7 @@ PYTHONPATH=src pytest tests/
 
 `Taivium.process()` follows this sequence:
 
-1. Collect detector evidence (`spacy_evidence`, `regex_evidence` [calibrated confidence], `transformer_evidence`, `llm_evidence`)
+1. Collect detector evidence (`spacy_evidence`, `regex_evidence` [EMAIL/PHONE/API_KEY/IP/DATE/SOCIALNUMBER with calibrated confidence], `transformer_evidence`, `llm_evidence`)
 2. Canonicalize spans (`canonicalize_spans`) — sweep-line overlap-cluster grouping produces one canonical entity per non-overlapping cluster via weighted label vote and longest-span selection
 2b. Find semantic recurrences (`find_recurrences`) — add repeated surface-form mentions of canonical entities missed by NER for recurrence-eligible entities only (token-boundary safe, non-overlapping; avoids ambiguous short PERSON/LOCATION/acronym cloning)
 3. Resolve deterministic IDs (`IdentityEngine.resolve`)

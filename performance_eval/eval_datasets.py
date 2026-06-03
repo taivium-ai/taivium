@@ -33,6 +33,10 @@ LABEL_PROFILES = {
         "EMAIL",
         "PHONE",
         "API_KEY",
+        "DATE",
+        "IP",
+        "SOCIALNUMBER",
+        "USERNAME"
     },
     "privacy_no_org": {
         "PERSON",
@@ -40,6 +44,10 @@ LABEL_PROFILES = {
         "EMAIL",
         "PHONE",
         "API_KEY",
+        "DATE",
+        "IP",
+        "SOCIALNUMBER",
+        "USERNAME"
     },
 }
 
@@ -86,6 +94,21 @@ PRIVACY_LABEL_MAP = {
     "API_KEY": "API_KEY",
     "APIKEY": "API_KEY",
     "ACCESS_TOKEN": "API_KEY",
+    "DATE": "DATE",
+    "IP": "IP",
+    "SOCIALNUMBER": "SOCIALNUMBER",
+    "USERNAME": "USERNAME",
+    "BOD": "DATE",
+    "TIME": "DATE",
+    "GEOCOORD": "LOCATION",
+    "TITLE": "PERSON",
+    "SEX": "PERSON",
+    # Document identifiers grouped under SOCIALNUMBER for broader PII coverage.
+    "PASSPORT": "SOCIALNUMBER",
+    "IDCARD": "SOCIALNUMBER",
+    "DRIVERLICENSE": "SOCIALNUMBER",
+    "CARDISSUER": "SOCIALNUMBER",
+    "PASS": "SOCIALNUMBER",
 }
 
 
@@ -106,6 +129,10 @@ def _map_raw_label(raw_label: str) -> str:
         return "PHONE"
     if "API" in value and "KEY" in value:
         return "API_KEY"
+    if "DATE" in value or "TIME" in value:
+        return "DATE"
+    if value == "IP" or "IP" in value:
+        return "IP"
 
     # Do not coerce weak identifiers (e.g. USERNAME, HANDLE, ACCOUNT_ID) to PERSON.
     return "UNKNOWN"
@@ -169,7 +196,7 @@ def load_cached_dataset(ds_name: str, allowed_labels) -> Any:
                     {"dataset": ds_name, "allowed_labels": allowed_labels})
 
     if dataset_file.exists():
-        logger.warning(f"Loading dataset from cache: {dataset_file}")
+        logger.warning("Loading dataset from cache: %s", dataset_file)
         with open(dataset_file, "rb") as f:
             ds = pickle.load(f)
     else:
@@ -200,7 +227,7 @@ def load_cached_dataset(ds_name: str, allowed_labels) -> Any:
 
     if not dataset_file.exists():
         CACHE_DIR.mkdir(exist_ok=True)
-        logger.warning(f"Saving dataset to cache: {dataset_file}")
+        logger.warning("Saving dataset to cache: %s", dataset_file)
         with open(dataset_file, "wb") as f:
             pickle.dump(ds, f)
 
