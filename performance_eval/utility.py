@@ -209,7 +209,7 @@ def get_delta_matrix_tables(settings_results):
     short_names = [f"{s['detection_func'].__name__} ({s['spacy_model_name']})" 
                    for s in settings_results]
     full_names = [
-        f"{s['detection_func'].__name__} ({s['spacy_model_name']}) [{s['cache_file'].stem if 'cache_file' in s and s['cache_file'] else 'no-cache'}]"
+        f"{s['detection_func'].__name__} ({s['spacy_model_name']}) [{s.get('run_cache_name') or (s['cache_file'].stem if 'cache_file' in s and s['cache_file'] else 'no-cache')}]"
         for s in settings_results
     ]
 
