@@ -162,135 +162,217 @@ def calculate_delta(metrics1, metrics2):
     }
     return delta
 
-def save_results(profile, labels, spacy_metrics, taivium_metrics,
-                 spacy_errors, taivium_errors, taivium_cache_file,
-                 spacy_model, taivium_spacy_model):
-    """Persist metrics/deltas and wrong-detection samples to files."""
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    run_id = f"{profile}_{timestamp}"
 
-    delta = calculate_delta(taivium_metrics, spacy_metrics)
+def get_delta_matrix_tables(settings_results):
+    """Get delta metrics as matrix tables (like confusion matrices).
+    
+    Creates separate tables for precision, recall, and F1 score.
+    Rows: baseline model (i), Columns: comparison model (j)
+    Cell value: delta of metric when j - i
+    Returns a dictionary with matrices data.
+    """
+    import numpy as np
+    
+    n = len(settings_results)
+    model_names = [f"{s['detection_func'].__name__} ({s['spacy_model_name']})" for s in settings_results]
+    
+    metrics_to_display = ["precision", "recall", "f1"]
+    matrices_data = {}
+    
+    for metric_name in metrics_to_display:
+        # Initialize matrix
+        matrix = np.zeros((n, n))
+        
+        # Fill matrix with deltas
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    matrix[i][j] = 0.0
+                else:
+                    delta = calculate_delta(
+                        settings_results[j]["metrics"],
+                        settings_results[i]["metrics"]
+                    )
+                    matrix[i][j] = delta[metric_name]
+        
+        # Find max value for highlighting (excluding diagonal)
+        mask = ~np.eye(n, dtype=bool)
+        max_val = np.max(np.abs(matrix[mask])) if np.any(mask) else 0
+        
+        # Store matrix data
+        matrices_data[metric_name] = {
+            "model_names": model_names,
+            "matrix": matrix.tolist(),
+            "max_absolute_value": float(max_val)
+        }
+    
+    return matrices_data
 
-    commit_hash = get_git_commit_hash()
-    git_tag = get_git_tag()
 
-    payload = {
-        "run_id": run_id,
-        "timestamp_utc": timestamp,
-        "spaCy Model": spacy_model,
-        "Taivium spaCy Model": taivium_spacy_model,
-        "Git Commit Hash": commit_hash,
-        "profile": profile,
-        "labels": sorted(labels),
-        "spacy": spacy_metrics,
-        "taivium": taivium_metrics,
-        "delta_taivium_minus_spacy": delta,
+def print_delta_matrix_tables(settings_results):
+    """Print delta metrics as matrix tables (like confusion matrices) with highlighting.
+    
+    Creates separate tables for precision, recall, and F1 score.
+    Rows: baseline model (i), Columns: comparison model (j)
+    Cell value: delta of metric when j - i
+    Highest values in each metric are highlighted.
+    Each detection is labeled with its detection function name and spacy model name.
+    """
+    import numpy as np
+    
+    matrices_data = get_delta_matrix_tables(settings_results)
+    metrics_to_display = ["precision", "recall", "f1"]
+    
+    for metric_name in metrics_to_display:
+        data = matrices_data[metric_name]
+        model_names = data["model_names"]
+        matrix = np.array(data["matrix"])
+        max_val = data["max_absolute_value"]
+        n = len(model_names)
+        
+        # Print table header
+        print(f"\n{'='*80}")
+        print(f"DELTA {metric_name.upper()} - Rows (baseline) vs Columns (comparison)")
+        print(f"{'='*80}")
+        
+        # Print column headers
+        header = f"{'Baseline':<15} |"
+        for col_name in model_names:
+            header += f" {col_name:>12} |"
+        print(header)
+        print("-" * len(header))
+        
+        # Print rows
+        for i, row_name in enumerate(model_names):
+            row_str = f"{row_name:<15} |"
+            for j in range(n):
+                val = matrix[i][j]
+                # Highlight if it's the max absolute value and not zero
+                is_max = (abs(val) == max_val and val != 0) if max_val > 0 else False
+                marker = "⭐" if is_max else "  "
+                
+                row_str += f" {val:>10.4f}{marker} |"
+            print(row_str)
+        
+        print("=" * len(header))
+
+
+def format_delta_matrix_tables_as_text(settings_results):
+    """Format delta metrics as matrix tables text (like confusion matrices).
+    
+    Returns a formatted string with separate tables for precision, recall, and F1.
+    Rows: baseline model (i), Columns: comparison model (j)
+    Cell value: delta of metric when j - i
+    Highest values in each metric are highlighted with ⭐.
+    Each detection is labeled with its detection function name and spacy model name.
+    """
+    import numpy as np
+    
+    matrices_data = get_delta_matrix_tables(settings_results)
+    metrics_to_display = ["precision", "recall", "f1"]
+    
+    output_lines = []
+    
+    for metric_name in metrics_to_display:
+        data = matrices_data[metric_name]
+        model_names = data["model_names"]
+        matrix = np.array(data["matrix"])
+        max_val = data["max_absolute_value"]
+        n = len(model_names)
+        
+        # Table header
+        output_lines.append(f"\n{'='*80}")
+        output_lines.append(f"DELTA {metric_name.upper()} - Rows (baseline) vs Columns (comparison)")
+        output_lines.append(f"{'='*80}")
+        
+        # Column headers
+        header = f"{'Baseline':<15} |"
+        for col_name in model_names:
+            header += f" {col_name:>12} |"
+        output_lines.append(header)
+        output_lines.append("-" * len(header))
+        
+        # Rows
+        for i, row_name in enumerate(model_names):
+            row_str = f"{row_name:<15} |"
+            for j in range(n):
+                val = matrix[i][j]
+                # Highlight if it's the max absolute value and not zero
+                is_max = (abs(val) == max_val and val != 0) if max_val > 0 else False
+                marker = "⭐" if is_max else "  "
+                
+                row_str += f" {val:>10.4f}{marker} |"
+            output_lines.append(row_str)
+        
+        output_lines.append("=" * len(header))
+    
+    return "\n".join(output_lines)
+
+
+def save_evaluation_results(cache_file, detection_func_name, dataset, label_profile, 
+                           allowed_labels, model_name, metrics, errors):
+    """Save evaluation results (report, metrics JSON, and errors JSON).
+    
+    Args:
+        cache_file: Path object for the cache file
+        detection_func_name: Name of detection function
+        dataset: Dataset name
+        label_profile: Label profile name
+        allowed_labels: Set/list of allowed labels
+        model_name: Name of the model used
+        metrics: Dict with 'precision', 'recall', 'f1' keys
+        errors: List of error dicts with 'index', 'text', 'false_positives', 'false_negatives'
+    """
+    import json
+    
+    # Report text file
+    report_path = cache_file.parent / f"{cache_file.stem}_{detection_func_name}_report.txt"
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write(f"Evaluation Report for {detection_func_name}\n")
+        f.write(f"Dataset: {dataset}\n")
+        f.write(f"Label Profile: {label_profile}\n")
+        f.write(f"Allowed Labels: {', '.join(sorted(allowed_labels))}\n")
+        f.write(f"Model Name: {model_name}\n")
+        f.write(f"Git Commit Hash: {get_git_commit_hash()}\n")
+        f.write("\nMetrics:\n")
+        f.write(f"Precision: {metrics['precision']:.12f}\n")
+        f.write(f"Recall:    {metrics['recall']:.12f}\n")
+        f.write(f"F1 Score:  {metrics['f1']:.12f}\n")
+    
+    # Metrics JSON
+    json_path = cache_file.parent / f"{cache_file.stem}_{detection_func_name}_report.json"
+    json_data = {
+        "detection_func": detection_func_name,
+        "dataset": dataset,
+        "label_profile": label_profile,
+        "allowed_labels": sorted(allowed_labels),
+        "model_name": model_name,
+        "git_commit_hash": get_git_commit_hash(),
+        "metrics": {
+            "precision": metrics['precision'],
+            "recall": metrics['recall'],
+            "f1": metrics['f1']
+        }
     }
-    if git_tag:
-        payload["Git Tag"] = git_tag
-
-    # Use cache filename (without extension) as folder name
-    cache_folder = taivium_cache_file.parent / taivium_cache_file.stem
-    results_dir = cache_folder / "results"
-    results_dir.mkdir(parents=True, exist_ok=True)
-
-    latest_json = results_dir / f"latest_{profile}.json"
-    latest_txt = results_dir / f"latest_{profile}.txt"
-    run_json = results_dir / f"{run_id}.json"
-    run_txt = results_dir / f"{run_id}.txt"
-
-    for path in (latest_json, run_json):
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=2)
-
-    errors_payload = {
-        "run_id": run_id,
-        "timestamp_utc": timestamp,
-        "profile": profile,
-        "labels": sorted(labels),
-        "spacy_wrong_detections": spacy_errors,
-        "taivium_wrong_detections": taivium_errors,
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(json_data, f, indent=2)
+    
+    # Errors JSON (both timestamped and latest versions)
+    errors_json_path = cache_file.parent / f"{cache_file.stem}_{detection_func_name}_errors.json"
+    latest_errors_json_path = cache_file.parent / f"{cache_file.stem}_latest_{detection_func_name}_errors.json"
+    
+    errors_json_data = {
+        "detection_func": detection_func_name,
+        "model_name": model_name,
+        "dataset": dataset,
+        "label_profile": label_profile,
+        "total_errors": len(errors),
+        "errors": errors
     }
+    
+    for path in (errors_json_path, latest_errors_json_path):
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(errors_json_data, f, indent=2)
 
-    tag_line = f"Git Tag: {git_tag}\n" if git_tag else ""
 
-    report = (
-        f"Run ID: {run_id}\n"
-        f"Timestamp (UTC): {timestamp}\n"
-        f"spaCy Model: {spacy_model}\n"
-        f"Taivium spaCy Model: {taivium_spacy_model}\n"
-        f"Git Commit Hash: {commit_hash}\n"
-        f"{tag_line}"
-        f"Profile: {profile}\n"
-        f"Labels: {', '.join(sorted(labels))}\n\n"
-        f"spaCy\n"
-        f"  Precision: {spacy_metrics['precision']:.12f}\n"
-        f"  Recall:    {spacy_metrics['recall']:.12f}\n"
-        f"  F1:        {spacy_metrics['f1']:.12f}\n\n"
-        f"Taivium\n"
-        f"  Precision: {taivium_metrics['precision']:.12f}\n"
-        f"  Recall:    {taivium_metrics['recall']:.12f}\n"
-        f"  F1:        {taivium_metrics['f1']:.12f}\n\n"
-        f"Delta (Taivium - spaCy)\n"
-        f"  Precision: {delta['precision']:+.12f}\n"
-        f"  Recall:    {delta['recall']:+.12f}\n"
-        f"  F1:        {delta['f1']:+.12f}\n"
-    )
 
-    for path in (latest_txt, run_txt):
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(report)
-
-    latest_errors_json = results_dir / f"latest_{profile}_errors.json"
-    run_errors_json = results_dir / f"{run_id}_errors.json"
-    latest_errors_txt = results_dir / f"latest_{profile}_errors.txt"
-    run_errors_txt = results_dir / f"{run_id}_errors.txt"
-
-    for path in (latest_errors_json, run_errors_json):
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(errors_payload, fh, indent=2)
-
-    lines = [
-        f"Run ID: {run_id}",
-        f"Profile: {profile}",
-        f"Labels: {', '.join(sorted(labels))}",
-        "",
-        f"spaCy wrong-detection samples: {len(spacy_errors)}",
-        "",
-    ]
-    for i, sample in enumerate(spacy_errors, start=1):
-        lines.extend([
-            f"[spaCy sample #{i}] index={sample['index']}",
-            f"text: {sample['text']}",
-            f"false_positives: {sample['false_positives']}",
-            f"false_negatives: {sample['false_negatives']}",
-            "",
-        ])
-
-    lines.extend([
-        f"Taivium wrong-detection samples: {len(taivium_errors)}",
-        "",
-    ])
-    for i, sample in enumerate(taivium_errors, start=1):
-        lines.extend([
-            f"[Taivium sample #{i}] index={sample['index']}",
-            f"text: {sample['text']}",
-            f"false_positives: {sample['false_positives']}",
-            f"false_negatives: {sample['false_negatives']}",
-            "",
-        ])
-
-    errors_report = "\n".join(lines)
-    for path in (latest_errors_txt, run_errors_txt):
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(errors_report)
-
-    print("\nSaved files:")
-    print(latest_json)
-    print(latest_txt)
-    print(run_json)
-    print(run_txt)
-    print(latest_errors_json)
-    print(latest_errors_txt)
-    print(run_errors_json)
-    print(run_errors_txt)

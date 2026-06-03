@@ -1,14 +1,16 @@
 import argparse
 import os
 import sys
+import json
+
+import tqdm
 # Ensure project root is importable when run as a script (e.g., via VS Code debugger)
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
-from performance_eval.utility import save_results, calculate_delta
+from performance_eval.utility import print_delta_matrix_tables, get_delta_matrix_tables, format_delta_matrix_tables_as_text, save_evaluation_results
 from performance_eval.eval_datasets import DATASET_LIST, load_cached_dataset, LABEL_PROFILES
-from performance_eval.eval_reference import spacy_evaluation
-from performance_eval.eval_taivium import taivium_evaluation
+from performance_eval.eval_reference import spacy_detection, taivium_detection, evaluation
 
 parser = argparse.ArgumentParser(
     description="Evaluate framework, choose dataset and label profile and error saving.")
@@ -33,62 +35,65 @@ parser.add_argument(
     help="Maximum number of wrong-detection text samples to save per model.",
 )
 
-parser.add_argument(
-    "--spacy-model-name",
-    type=str,
-    default="en_core_web_lg",
-    help="spaCy model name for evaluation.",
-)
-
-parser.add_argument(
-    "--taivium-spacy-model-name",
-    type=str,
-    default="en_core_web_lg",
-    help="spaCy model in Taivium for evaluation.",
-)
-
 args, _ = parser.parse_known_args()
 
 allowed_labels = LABEL_PROFILES[args.profile]
+print(f"Evaluating on dataset '{args.dataset}' with label profile '{args.profile}' \
+      (allowed labels: {', '.join(sorted(allowed_labels))})")
 
 dataset, ner_tag_names, comparable_golds = load_cached_dataset(args.dataset, allowed_labels)
-spacy_metrics, spacy_errors, spacy_cache_file = spacy_evaluation(dataset, comparable_golds,
+settings_results = \
+    [
+        {"metrics":{},"detection_func": spacy_detection, "spacy_model_name": "en_core_web_sm"},
+        # {"metrics":{},"detection_func": spacy_detection, "spacy_model_name": "en_core_web_md"},
+        {"metrics":{},"detection_func": spacy_detection, "spacy_model_name": "en_core_web_lg"},
+        {"metrics":{},"detection_func": taivium_detection, "spacy_model_name": "en_core_web_sm"},
+        # {"metrics":{},"detection_func": taivium_detection, "spacy_model_name": "en_core_web_md"},
+        # {"metrics":{},"detection_func": taivium_detection, "spacy_model_name": "en_core_web_lg"},
+    ]
+
+for i, detection_settings_result in tqdm.tqdm(enumerate(settings_results), total=len(settings_results)):
+    detection = detection_settings_result["detection_func"]
+    model_name = detection_settings_result["spacy_model_name"]
+    metrics, errors, cache_file = evaluation(detection, dataset, comparable_golds,
                                                allowed_labels, args.max_errors,
-                                               model_name=args.spacy_model_name)
+                                               model_name=model_name)
+    detection_settings_result["metrics"] = metrics
+    detection_settings_result["errors"] = errors
+    detection_settings_result["cache_file"] = cache_file
+    print(f"Results for {detection.__name__} (cache: {cache_file}):")
+    print("Precision:", metrics["precision"])
+    print("Recall:", metrics["recall"])
 
-# Evaluate spaCy baseline
-print(f"\nProfile: {args.profile}")
-print("Labels:", ", ".join(sorted(allowed_labels)))
-print("\n=== spaCy Baseline Performance ===")
-print("Precision:", spacy_metrics["precision"])
-print("Recall:", spacy_metrics["recall"])
-print("F1:", spacy_metrics["f1"])
+    # Save evaluation results (reports, metrics, errors)
+    save_evaluation_results(cache_file, detection.__name__, args.dataset, args.profile,
+                           allowed_labels, model_name, metrics, errors)
 
-# --- Taivium span-based evaluation ---
-# Evaluate Taivium pipeline
-taivium_metrics, taivium_errors, taivium_cache_file = taivium_evaluation(dataset,
-                                                                         comparable_golds,
-                                                                         allowed_labels,
-                     args.max_errors, model_name=args.taivium_spacy_model_name)
-print("\n=== Taivium Pipeline Performance ===")
-print("Precision:", taivium_metrics["precision"])
-print("Recall:", taivium_metrics["recall"])
-print("F1:", taivium_metrics["f1"])
+# Print delta matrices
+print_delta_matrix_tables(settings_results)
 
-delta = calculate_delta(taivium_metrics, spacy_metrics)
-print("\n=== Delta (Taivium - spaCy) ===")
-print("Precision:", delta["precision"])
-print("Recall:", delta["recall"])
-print("F1:", delta["f1"])
+# Save delta matrices to JSON
+matrices_data = get_delta_matrix_tables(settings_results)
+delta_matrices_json = {
+    "precision": matrices_data["precision"],
+    "recall": matrices_data["recall"],
+    "f1": matrices_data["f1"],
+    "note": "Rows are baseline models, columns are comparison models. Cell value = delta (column - row)"
+}
 
-save_results(
-    args.profile,
-    allowed_labels,
-    spacy_metrics,
-    taivium_metrics,
-    spacy_errors,
-    taivium_errors,
-    taivium_cache_file,
-    args.spacy_model_name,
-    args.taivium_spacy_model_name,
-)
+# Save to a summary delta file in the first cache directory
+if settings_results:
+    first_cache_file = settings_results[0]["cache_file"]
+    delta_json_path = first_cache_file.parent / f"{first_cache_file.stem}_delta_matrices.json"
+    delta_txt_path = first_cache_file.parent / f"{first_cache_file.stem}_delta_matrices.txt"
+    
+    with open(delta_json_path, "w", encoding="utf-8") as f:
+        json.dump(delta_matrices_json, f, indent=2)
+    
+    # Save text format
+    delta_text = format_delta_matrix_tables_as_text(settings_results)
+    with open(delta_txt_path, "w", encoding="utf-8") as f:
+        f.write(delta_text)
+    
+    print(f"\nDelta matrices saved to: {delta_json_path}")
+    print(f"Delta matrices saved to: {delta_txt_path}")
