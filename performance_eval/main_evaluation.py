@@ -1,14 +1,16 @@
+'''Main evaluation script for running entity detection evaluations on specified datasets and label profiles.
+This script loads the specified dataset and label profile, runs evaluations using both spaCy and Taivium, and saves the results and error samples. It also computes and prints delta matrices comparing the models'''
 import argparse
 import os
 import sys
-import json
 
 import tqdm
 # Ensure project root is importable when run as a script (e.g., via VS Code debugger)
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
-from performance_eval.utility import print_delta_matrix_tables, get_delta_matrix_tables, format_delta_matrix_tables_as_text, save_evaluation_results
+from performance_eval.utility import print_delta_matrix_tables, \
+                                    save_evaluation_results, save_delta_matrices
 from performance_eval.eval_datasets import DATASET_LIST, load_cached_dataset, LABEL_PROFILES
 from performance_eval.eval_reference import spacy_detection, taivium_detection, evaluation
 
@@ -52,7 +54,8 @@ settings_results = \
         # {"metrics":{},"detection_func": taivium_detection, "spacy_model_name": "en_core_web_lg"},
     ]
 
-for i, detection_settings_result in tqdm.tqdm(enumerate(settings_results), total=len(settings_results)):
+for i, detection_settings_result in tqdm.tqdm(enumerate(settings_results), 
+                                              total=len(settings_results)):
     detection = detection_settings_result["detection_func"]
     model_name = detection_settings_result["spacy_model_name"]
     metrics, errors, cache_file = evaluation(detection, dataset, comparable_golds,
@@ -72,28 +75,9 @@ for i, detection_settings_result in tqdm.tqdm(enumerate(settings_results), total
 # Print delta matrices
 print_delta_matrix_tables(settings_results)
 
-# Save delta matrices to JSON
-matrices_data = get_delta_matrix_tables(settings_results)
-delta_matrices_json = {
-    "precision": matrices_data["precision"],
-    "recall": matrices_data["recall"],
-    "f1": matrices_data["f1"],
-    "note": "Rows are baseline models, columns are comparison models. Cell value = delta (column - row)"
-}
-
-# Save to a summary delta file in the first cache directory
+# Save delta matrices to JSON and text formats
 if settings_results:
     first_cache_file = settings_results[0]["cache_file"]
-    delta_json_path = first_cache_file.parent / f"{first_cache_file.stem}_delta_matrices.json"
-    delta_txt_path = first_cache_file.parent / f"{first_cache_file.stem}_delta_matrices.txt"
-    
-    with open(delta_json_path, "w", encoding="utf-8") as f:
-        json.dump(delta_matrices_json, f, indent=2)
-    
-    # Save text format
-    delta_text = format_delta_matrix_tables_as_text(settings_results)
-    with open(delta_txt_path, "w", encoding="utf-8") as f:
-        f.write(delta_text)
-    
+    delta_json_path, delta_txt_path = save_delta_matrices(first_cache_file, settings_results)
     print(f"\nDelta matrices saved to: {delta_json_path}")
     print(f"Delta matrices saved to: {delta_txt_path}")
