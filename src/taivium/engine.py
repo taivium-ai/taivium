@@ -58,14 +58,24 @@ class RiskLevel(str, Enum):
 # Lazy-load spaCy model
 # -----------------------------
 
-@lru_cache(maxsize=1)
-def get_spacy_model() -> Any:
-    """Lazy-loads and returns the spaCy model with only the NER component enabled."""
+@lru_cache(maxsize=8)
+def get_spacy_model(model_name: str = "en_core_web_sm") -> Any:
+    """Lazy-load and return a spaCy model with only NER enabled.
+
+    Args:
+        model_name: spaCy model package name to load (default: ``en_core_web_sm``).
+
+    Returns:
+        Loaded spaCy pipeline instance.
+
+    Raises:
+        OSError: If the requested spaCy model is not installed.
+    """
     try:
         # Disable unused components (tagger, parser, lemmatizer) for faster
         # inference
         return spacy.load(
-            "en_core_web_sm",
+            model_name,
             disable=[
                 "tagger",
                 "parser",
@@ -73,8 +83,8 @@ def get_spacy_model() -> Any:
                 "attribute_ruler"])
     except OSError as exc:
         # Raise an error instead of falling back to a blank pipeline.
-        error_text = "spaCy model 'en_core_web_sm' not found."
-        error_text += " Please install it with 'python -m spacy download en_core_web_sm'."
+        error_text = f"spaCy model '{model_name}' not found."
+        error_text += f" Please install it with 'python -m spacy download {model_name}'."
         logger.error(error_text, exc_info=True)
         raise OSError(error_text) from exc
 
@@ -160,9 +170,18 @@ def normalize_label(label: str) -> str:
 # Evidence detectors
 # -----------------------------
 
-def spacy_evidence(text: str) -> List[Evidence]:
-    """Collects NER evidence from spaCy."""
-    nlp = get_spacy_model()
+def spacy_evidence(text: str, model_name: str = "en_core_web_sm") -> List[Evidence]:
+    """Collect NER evidence from spaCy.
+
+    Args:
+        text: Input text to analyze.
+        model_name: spaCy model package name used for detection
+            (default: ``en_core_web_sm``).
+
+    Returns:
+        List of spaCy-origin ``Evidence`` records.
+    """
+    nlp = get_spacy_model(model_name)
     doc = nlp(text)
     evidence: List[Evidence] = []
 
@@ -218,6 +237,7 @@ RECURRENCE_ALLOWED = {
 def collect_evidence(
     text: str,
     *,
+    spacy_model_name: str = "en_core_web_sm",
     use_transformer: bool = False,
     use_llm: bool = False,
     transformer_fn: Optional[Callable[[str], List[Evidence]]] = None,
@@ -227,6 +247,7 @@ def collect_evidence(
 
     Args:
         text: Input text to run detectors over.
+        spacy_model_name: spaCy model package name for NER.
         use_transformer: Master switch for the transformer detector layer. Must be
             ``True`` for the layer to run. When ``True`` and no *transformer_fn* is
             provided, uses the built-in BERT NER detector (requires
@@ -240,13 +261,24 @@ def collect_evidence(
             when *use_transformer* is ``False``.
         llm_fn: Custom LLM detector callable. Replaces the built-in LLM layer
             when *use_llm* is ``True``. Has no effect when *use_llm* is ``False``.
+
+    Returns:
+        Aggregated evidence from enabled detector layers.
     """
-    evidence = spacy_evidence(text) + regex_evidence(text)
+    evidence = spacy_evidence(text, spacy_model_name) + regex_evidence(text)
     if use_transformer:
         evidence += (transformer_fn or transformer_evidence)(text)
     if use_llm:
         evidence += (llm_fn or llm_evidence)(text)
     return evidence
+
+
+def _resolve_spacy_model_name(options: Dict[str, Any]) -> str:
+    """Resolves configured spaCy model from options.
+
+    Supports both `spacy_model_name` (preferred) and `model_name` (alias).
+    """
+    return str(options.get("spacy_model_name") or options.get("model_name") or "en_core_web_sm")
 
 
 # -----------------------------
@@ -955,6 +987,12 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
             If not provided, IDs are globally stable (legacy behavior).
         id_hash_len (int, optional):
             Number of hex digits to use from the hash (default 12 for legacy compatibility).
+        spacy_model_name (str, optional):
+            spaCy model package name used for NER detection.
+            Defaults to ``en_core_web_sm``.
+        model_name (str, optional):
+            Backward-compatible alias for ``spacy_model_name``.
+            If both are provided, ``model_name`` takes precedence.
 
     Usage Examples:
         # Default (global, legacy-stable IDs)
@@ -980,10 +1018,15 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         use_llm: bool = False,
         transformer_fn: Optional[Callable[[str], List[Evidence]]] = None,
         llm_fn: Optional[Callable[[str], List[Evidence]]] = None,
+        spacy_model_name: str = "en_core_web_sm",
+        model_name: Optional[str] = None,
         id_salt: Optional[str] = None,
         id_hash_len: int = 12,
     ):  # pylint: disable=too-many-arguments
         """
+        spacy_model_name: spaCy model package name used by NER.
+        model_name: Backward-compatible alias for spacy_model_name.
+            If both are provided, model_name takes precedence.
         id_salt: Optional string to scope entity IDs (tenant/session/namespace).
         id_hash_len: Number of hex digits to use from the hash (default 12 for 
         legacy compatibility).
@@ -998,6 +1041,7 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         self.use_llm = use_llm
         self.transformer_fn = transformer_fn
         self.llm_fn = llm_fn
+        self.spacy_model_name = model_name or spacy_model_name
         self.latency_history: List[float] = []  # Stores recent processing latencies in milliseconds
 
     def process(self, text: str) -> Dict[str, Any]:  # pylint: disable=too-many-locals
@@ -1029,6 +1073,7 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         # Step 1: collect raw detector evidence.
         evidence = collect_evidence(
             text,
+            spacy_model_name=self.spacy_model_name,
             use_transformer=self.use_transformer,
             use_llm=self.use_llm,
             transformer_fn=self.transformer_fn,
@@ -1149,15 +1194,16 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
 
 
 # Thread-safe cache for Taivium instances keyed by options
-_engine_cache: Dict[Tuple[bool, bool, Optional[str], int], Taivium] = {}
+_engine_cache: Dict[Tuple[bool, bool, str, Optional[str], int], Taivium] = {}
 _engine_cache_lock = threading.Lock()
 
 
-def _options_key(parsed_options: Dict[str, Any]) -> Tuple[bool, bool, Optional[str], int]:
+def _options_key(parsed_options: Dict[str, Any]) -> Tuple[bool, bool, str, Optional[str], int]:
     # Only use options that affect instantiation, and make them hashable
     return (
         bool(parsed_options.get("use_transformer", False)),
         bool(parsed_options.get("use_llm", False)),
+        _resolve_spacy_model_name(parsed_options),
         parsed_options.get("id_salt") or None,
         int(parsed_options.get("id_hash_len", 12)),
         # Do not include non-hashable objects like functions or custom classes
@@ -1302,6 +1348,12 @@ def module_engine_process(text: str, options: Any = None) -> "Dict[str, Any]":
         - Uses SESSION_TTL_SECONDS as default TTL and optional
             TENANT_SESSION_TTL_SECONDS JSON map for tenant overrides
     - Falls back to InMemorySessionStore if Redis not configured
+
+        Supported model options:
+        - `spacy_model_name` (preferred): spaCy model package name for NER
+        - `model_name` (alias): backward-compatible alias of `spacy_model_name`
+            If both are provided, `spacy_model_name` is used for instantiation and
+            cache keying via unified resolution.
     """
     _logger = logging.getLogger("taivium.engine")
     _logger.info(

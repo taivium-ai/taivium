@@ -30,6 +30,13 @@ LABEL_PROFILES = {
         "PHONE",
         "API_KEY",
     },
+    "privacy_no_org": {
+        "PERSON",
+        "LOCATION",
+        "EMAIL",
+        "PHONE",
+        "API_KEY",
+    },
 }
 
 LABEL_MAP = {

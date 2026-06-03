@@ -200,7 +200,7 @@ def calculate_delta(metrics1, metrics2):
 def get_delta_matrix_tables(settings_results):
     """Get delta metrics as matrix tables (like confusion matrices).
     
-    Creates separate tables for precision, recall, and F1 score.
+    Creates separate tables for precision, recall, F1 score, and timing (ms/sample).
     Rows: baseline model (i), Columns: comparison model (j)
     Cell value: delta of metric when j - i
     Returns a dictionary with matrices data.
@@ -213,35 +213,42 @@ def get_delta_matrix_tables(settings_results):
         for s in settings_results
     ]
 
-    metrics_to_display = ["precision", "recall", "f1"]
+    # metric_name -> (values_per_model_fn, highlight_positive)
+    # For timing: lower is better, so negative delta = improvement → highlight_positive=False
+    def _avg_ms(s):
+        t = s.get("total_time")
+        n_s = s.get("n_samples")
+        return t / n_s * 1000 if (t is not None and n_s) else None
+
+    metrics_config = [
+        ("precision",   lambda s: s["metrics"]["precision"], True),
+        ("recall",      lambda s: s["metrics"]["recall"],    True),
+        ("f1",          lambda s: s["metrics"]["f1"],        True),
+        ("timing_ms",   _avg_ms,                             False),
+    ]
     matrices_data = {}
 
-    for metric_name in metrics_to_display:
-        # Initialize matrix
-        matrix = np.zeros((n, n))
+    for metric_name, value_fn, highlight_positive in metrics_config:
+        values = [value_fn(s) for s in settings_results]
+        # Skip timing matrix if any model has no timing data
+        if metric_name == "timing_ms" and any(v is None for v in values):
+            continue
 
-        # Fill matrix with deltas
+        matrix = np.zeros((n, n))
         for i in range(n):
             for j in range(n):
-                if i == j:
-                    matrix[i][j] = 0.0
-                else:
-                    delta = calculate_delta(
-                        settings_results[j]["metrics"],
-                        settings_results[i]["metrics"]
-                    )
-                    matrix[i][j] = delta[metric_name]
+                if i != j:
+                    matrix[i][j] = values[j] - values[i]
 
-        # Find max value for highlighting (excluding diagonal)
         mask = ~np.eye(n, dtype=bool)
         max_val = np.max(np.abs(matrix[mask])) if np.any(mask) else 0
 
-        # Store matrix data
         matrices_data[metric_name] = {
             "model_names": short_names,
             "model_legend": full_names,
             "matrix": matrix.tolist(),
-            "max_absolute_value": float(max_val)
+            "max_absolute_value": float(max_val),
+            "highlight_positive": highlight_positive,
         }
 
     return matrices_data
@@ -258,20 +265,20 @@ def print_delta_matrix_tables(settings_results):
     """
 
     matrices_data = get_delta_matrix_tables(settings_results)
-    metrics_to_display = ["precision", "recall", "f1"]
 
     # Print legend (cache mapping) once before all tables
-    legend = matrices_data[metrics_to_display[0]]["model_legend"]
+    first_key = next(iter(matrices_data))
+    legend = matrices_data[first_key]["model_legend"]
     print(f"\n{'='*80}")
     print("Model Legend:")
     for entry in legend:
         print(f"  {entry}")
 
-    for metric_name in metrics_to_display:
-        data = matrices_data[metric_name]
+    for metric_name, data in matrices_data.items():
         model_names = data["model_names"]
         matrix = np.array(data["matrix"])
         max_val = data["max_absolute_value"]
+        highlight_positive = data.get("highlight_positive", True)
         n = len(model_names)
 
         # Print table header
@@ -291,9 +298,11 @@ def print_delta_matrix_tables(settings_results):
             row_str = f"{row_name:<15} |"
             for j in range(n):
                 val = matrix[i][j]
-                # Highlight the best improvement (positive max delta only)
-                is_max = (abs(val) == max_val and val > 0) if max_val > 0 else False
-                marker = "⭐" if is_max else "  "
+                if highlight_positive:
+                    is_best = (abs(val) == max_val and val > 0) if max_val > 0 else False
+                else:
+                    is_best = (abs(val) == max_val and val < 0) if max_val > 0 else False
+                marker = "⭐" if is_best else "  "
         
                 row_str += f" {val:>10.4f}{marker} |"
             print(row_str)
@@ -312,22 +321,22 @@ def format_delta_matrix_tables_as_text(settings_results):
     """
 
     matrices_data = get_delta_matrix_tables(settings_results)
-    metrics_to_display = ["precision", "recall", "f1"]
 
     output_lines = []
 
     # Print legend (cache mapping) once before all tables
-    legend = matrices_data[metrics_to_display[0]]["model_legend"]
+    first_key = next(iter(matrices_data))
+    legend = matrices_data[first_key]["model_legend"]
     output_lines.append(f"\n{'='*80}")
     output_lines.append("Model Legend:")
     for entry in legend:
         output_lines.append(f"  {entry}")
 
-    for metric_name in metrics_to_display:
-        data = matrices_data[metric_name]
+    for metric_name, data in matrices_data.items():
         model_names = data["model_names"]
         matrix = np.array(data["matrix"])
         max_val = data["max_absolute_value"]
+        highlight_positive = data.get("highlight_positive", True)
         n = len(model_names)
 
         # Table header
@@ -348,9 +357,11 @@ def format_delta_matrix_tables_as_text(settings_results):
             row_str = f"{row_name:<15} |"
             for j in range(n):
                 val = matrix[i][j]
-                # Highlight the best improvement (positive max delta only)
-                is_max = (abs(val) == max_val and val > 0) if max_val > 0 else False
-                marker = "⭐" if is_max else "  "
+                if highlight_positive:
+                    is_best = (abs(val) == max_val and val > 0) if max_val > 0 else False
+                else:
+                    is_best = (abs(val) == max_val and val < 0) if max_val > 0 else False
+                marker = "⭐" if is_best else "  "
 
                 row_str += f" {val:>10.4f}{marker} |"
             output_lines.append(row_str)
@@ -452,6 +463,28 @@ def save_evaluation_results(cache_file, detection_func_name, dataset, label_prof
     for path in (errors_txt_path, latest_errors_txt_path):
         with open(path, "w", encoding="utf-8") as f:
             f.write(errors_text)
+
+
+def print_timing_summary(settings_results):
+    """Print a timing summary table for all evaluated models.
+
+    Args:
+        settings_results: List of dicts with 'detection_func', 'spacy_model_name',
+            'total_time' (seconds or None), and 'n_samples' (int or None).
+    """
+    print(f"\n{'='*80}")
+    print("Timing Summary:")
+    print(f"  {'Model':<45} {'Total (s)':>10} {'Avg (ms/sample)':>17}")
+    print(f"  {'-'*45} {'-'*10} {'-'*17}")
+    for s in settings_results:
+        label = f"{s['detection_func'].__name__} ({s['spacy_model_name']})"
+        t = s.get("total_time")
+        n = s.get("n_samples")
+        if t is not None and n:
+            print(f"  {label:<45} {t:>10.2f} {t / n * 1000:>17.2f}")
+        else:
+            print(f"  {label:<45} {'(cached, no time)':>29}")
+    print(f"{'='*80}")
 
 
 def save_delta_matrices(cache_file, settings_results):

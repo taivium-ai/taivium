@@ -67,6 +67,24 @@ PYTHONPATH=src pytest tests/
 5. Evaluate policy (`PolicyEngine.evaluate`)
 6. Transform text (`transform`)
 
+The spaCy detector defaults to `en_core_web_sm` and is configurable via `spacy_model_name`:
+
+```python
+from taivium.engine import Taivium, module_engine_process
+
+# Default model
+pipeline = Taivium()
+
+# Configure a different installed spaCy model
+pipeline = Taivium(spacy_model_name="en_core_web_lg")
+
+# Also configurable in module_engine_process options
+result = module_engine_process(
+  "Alice Johnson from Acme Corp",
+  options={"spacy_model_name": "en_core_web_lg"},
+)
+```
+
 
 `Taivium.process()` follows this sequence:
 

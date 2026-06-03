@@ -4,6 +4,7 @@ Taivium's performance on the same datasets and label profiles.
 '''
 import logging
 import pickle
+import time
 import spacy
 from presidio_analyzer import AnalyzerEngine
 from taivium import Taivium
@@ -14,8 +15,8 @@ logger = logging.getLogger(__name__)
 
 # Module-level cache for spaCy models
 _spacy_models = {}
-# Module-level cache for Taivium engine
-_taivium_engine = None
+# Module-level cache for Taivium engines (keyed by spaCy model)
+_taivium_engines = {}
 # Module-level cache for Presidio AnalyzerEngine
 _presidio_engine = None
 
@@ -29,11 +30,11 @@ _PRESIDIO_LABEL_MAP = {
 
 def taivium_detection(text, allowed_labels, model_name="en_core_web_sm"):
     '''Detect entities in text using Taivium. Returns a set of (start, end, label) spans.'''
-    # Load engine only once, reuse on subsequent calls
-    global _taivium_engine
-    if _taivium_engine is None:
-        _taivium_engine = Taivium()
-    engine = _taivium_engine
+    # Load engine per model only once, reuse on subsequent calls
+    if model_name not in _taivium_engines:
+        print(f"Loading Taivium engine for evaluation with spaCy model: {model_name}")
+        _taivium_engines[model_name] = Taivium(spacy_model_name=model_name)
+    engine = _taivium_engines[model_name]
     result = engine.process(text)
     pred_spans = set()
     for ent in result.get("entities", []):
@@ -45,6 +46,7 @@ def spacy_detection(text, allowed_labels, model_name="en_core_web_lg"):
     '''Detect entities in text using spaCy NER model. Returns a set of (start, end, label) spans.'''
     # Load model only once, reuse on subsequent calls
     if model_name not in _spacy_models:
+        print(f"Loading spaCy model for evaluation: {model_name}")
         _spacy_models[model_name] = spacy.load(model_name)
     nlp = _spacy_models[model_name]
     
@@ -59,10 +61,10 @@ def spacy_detection(text, allowed_labels, model_name="en_core_web_lg"):
 def presidio_anonymization_detection(text, allowed_labels, model_name="en_core_web_lg"):
     '''Detect entities in text using Microsoft Presidio AnalyzerEngine.
     Returns a set of (start, end, label) spans.'''
-    print("Running Presidio Anonymization Detection...with deafault model en_core_web_lg")
     global _presidio_engine
     if _presidio_engine is None:
         _presidio_engine = AnalyzerEngine()
+        print("Running Presidio Anonymization Detection...with default model en_core_web_lg")
     engine = _presidio_engine
 
     # Request only Presidio types that map to our allowed labels
@@ -94,7 +96,7 @@ def evaluation(detection, dataset, comparable_golds, allowed_labels,
         "max_errors": max_errors,
         "allowed_labels": allowed_labels,
         "model_name": model_name,
-        "commit_hash": get_git_commit_hash('.')  # Returns: 3aee14c8d2ab26b56645a4f6ff5616ea5477870a
+        "commit_hash": get_git_commit_hash('.')
     }
     cache_file = cache_file_from_payload(__file__, cache_payload)
 
@@ -103,11 +105,18 @@ def evaluation(detection, dataset, comparable_golds, allowed_labels,
         logger.warning(
             f"Loading evaluation from cache: {cache_file}")
         with open(cache_file, 'rb') as f:
-            metrics, errors = pickle.load(f)
-        return metrics, errors, cache_file
+            cached = pickle.load(f)
+        # Support old cache format (metrics, errors) and new (metrics, errors, total_time, n)
+        if len(cached) == 4:
+            metrics, errors, total_time, n_samples = cached
+        else:
+            metrics, errors = cached
+            total_time, n_samples = None, None
+        return metrics, errors, cache_file, total_time, n_samples
 
     tp = fp = fn = 0
     errors = []
+    t_start = time.perf_counter()
     # -------  start evaluation loop -------
     for idx, _ in enumerate(dataset["validation"]):
         # -------  Golden ground truth -------
@@ -132,10 +141,12 @@ def evaluation(detection, dataset, comparable_golds, allowed_labels,
             )
     p, r, f1 = compute_prf(tp, fp, fn)
     metrics = {"precision": p, "recall": r, "f1": f1}
+    total_time = time.perf_counter() - t_start
+    n_samples = len(comparable_golds)
 
     # Save to pickle cache
     logger.warning(f"Saving spaCy evaluation to cache: {cache_file}")
     with open(cache_file, 'wb') as f:
-        pickle.dump((metrics, errors), f)
+        pickle.dump((metrics, errors, total_time, n_samples), f)
 
-    return metrics, errors, cache_file
+    return metrics, errors, cache_file, total_time, n_samples

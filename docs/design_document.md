@@ -596,6 +596,8 @@ Regex detectors now use calibrated confidence values (email: 0.90, phone: 0.80, 
 
 The spaCy model is lazy-loaded on the first call to `PrivacyPipeline.process()`. The first call incurs a one-time startup cost (typically ~300–400 ms) while the model is loaded into memory. All subsequent calls run in ~10–20 ms. The model is loaded with unused pipeline components disabled (`tagger`, `parser`, `lemmatizer`, `attribute_ruler`) to minimise inference latency.
 
+By default, Taivium uses `en_core_web_sm`, and the model can be configured with `Taivium(spacy_model_name="<model>")` or `module_engine_process(..., options={"spacy_model_name": "<model>"})`.
+
 **Testing Environment:**
 - Macbook Pro M2 (Apple Silicon)
 - 16GB RAM, macOS Ventura 13.x

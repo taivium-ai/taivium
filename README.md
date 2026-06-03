@@ -120,6 +120,18 @@ Taivium uses spaCy for entity detection. You must manually install the English m
 pip install "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl#sha256=1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85"
 ```
 
+The default model is `en_core_web_sm`, and you can configure a different spaCy model at runtime:
+
+```python
+from taivium.engine import Taivium
+
+# Default
+pipeline = Taivium()
+
+# Configured model
+pipeline = Taivium(spacy_model_name="en_core_web_lg")
+```
+
 With Transformers (deep learning NER):
 
 ```bash
@@ -241,6 +253,24 @@ pipeline = Taivium(
 - Transformer → higher recall  
 - LLM → broader detection  
 - Both optional  
+
+### 6. Configure spaCy Model
+
+```python
+from taivium.engine import Taivium, module_engine_process
+
+# Class API: defaults to en_core_web_sm
+pipeline = Taivium(spacy_model_name="en_core_web_sm")
+
+# Switch to another installed spaCy model
+pipeline = Taivium(spacy_model_name="en_core_web_lg")
+
+# module_engine_process options
+result = module_engine_process(
+    "Alice emailed alice@acme.com",
+    options={"spacy_model_name": "en_core_web_lg"},
+)
+```
 
 ---
 

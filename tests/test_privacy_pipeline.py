@@ -46,7 +46,7 @@ def test_collect_evidence_calls_all_detectors(monkeypatch: pytest.MonkeyPatch) -
 
     import taivium.engine as pp  # pylint: disable=import-outside-toplevel
 
-    def _spacy(_: str):
+    def _spacy(_: str, model_name: str = "en_core_web_sm"):
         calls["spacy"] += 1
         return [Evidence(0, 5, "PERSON", "spacy", 0.7)]
 

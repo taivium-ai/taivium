@@ -11,7 +11,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 from performance_eval.utility import print_delta_matrix_tables, \
                                     save_evaluation_results, save_delta_matrices, \
-                                    plot_label_distribution
+                                    plot_label_distribution, print_timing_summary
 from performance_eval.eval_datasets import DATASET_LIST, load_cached_dataset, LABEL_PROFILES
 from performance_eval.eval_reference import spacy_detection, taivium_detection, \
     presidio_anonymization_detection, evaluation
@@ -20,8 +20,8 @@ parser = argparse.ArgumentParser(
     description="Evaluate framework, choose dataset and label profile and error saving.")
 parser.add_argument(
     "--profile",
-    choices=["privacy", "conll_ner"],
-    default="privacy",
+    choices=["privacy", "conll_ner", "privacy_no_org"],
+    default="privacy_no_org",
     help="Label profile for comparison: conll_ner \
         (PERSON/ORG/LOCATION) or privacy (adds EMAIL/PHONE/API_KEY).",
 )
@@ -56,24 +56,27 @@ print(f"Label distribution saved to: {_dist_path}")
 settings_results = \
     [
         {"metrics":{},"detection_func": spacy_detection, "spacy_model_name": "en_core_web_sm"},
-        # {"metrics":{},"detection_func": spacy_detection, "spacy_model_name": "en_core_web_md"},
+        {"metrics":{},"detection_func": spacy_detection, "spacy_model_name": "en_core_web_md"},
         {"metrics":{},"detection_func": spacy_detection, "spacy_model_name": "en_core_web_lg"},
         {"metrics":{},"detection_func": presidio_anonymization_detection, "spacy_model_name": "en_core_web_lg"},
         {"metrics":{},"detection_func": taivium_detection, "spacy_model_name": "en_core_web_sm"},
-        # {"metrics":{},"detection_func": taivium_detection, "spacy_model_name": "en_core_web_md"},
-        # {"metrics":{},"detection_func": taivium_detection, "spacy_model_name": "en_core_web_lg"},
+        {"metrics":{},"detection_func": taivium_detection, "spacy_model_name": "en_core_web_md"},
+        {"metrics":{},"detection_func": taivium_detection, "spacy_model_name": "en_core_web_lg"},
     ]
 
 for i, detection_settings_result in tqdm.tqdm(enumerate(settings_results), 
                                               total=len(settings_results)):
     detection = detection_settings_result["detection_func"]
     model_name = detection_settings_result["spacy_model_name"]
-    metrics, errors, cache_file = evaluation(detection, dataset, comparable_golds,
-                                               allowed_labels, args.max_errors,
-                                               model_name=model_name)
+    metrics, errors, cache_file, total_time, n_samples = evaluation(
+        detection, dataset, comparable_golds,
+        allowed_labels, args.max_errors,
+        model_name=model_name)
     detection_settings_result["metrics"] = metrics
     detection_settings_result["errors"] = errors
     detection_settings_result["cache_file"] = cache_file
+    detection_settings_result["total_time"] = total_time
+    detection_settings_result["n_samples"] = n_samples
     print(f"Results for {detection.__name__} (cache: {cache_file}):")
     print("Precision:", metrics["precision"])
     print("Recall:", metrics["recall"])
@@ -84,6 +87,9 @@ for i, detection_settings_result in tqdm.tqdm(enumerate(settings_results),
 
 # Print delta matrices
 print_delta_matrix_tables(settings_results)
+
+# Print timing summary
+print_timing_summary(settings_results)
 
 # Save delta matrices to JSON and text formats
 if settings_results:
