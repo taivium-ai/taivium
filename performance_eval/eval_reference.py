@@ -6,9 +6,12 @@ import logging
 import pickle
 import time
 import spacy
+from functools import lru_cache
+from pathlib import Path
 from presidio_analyzer import AnalyzerEngine
 from taivium import Taivium
 from taivium.engine import normalize_label
+from presidio_analyzer.nlp_engine import SpacyNlpEngine
 from .utility import compute_prf, cache_file_from_payload, get_git_commit_hash
 
 logger = logging.getLogger(__name__)
@@ -47,7 +50,12 @@ def spacy_detection(text, allowed_labels, model_name="en_core_web_lg"):
     # Load model only once, reuse on subsequent calls
     if model_name not in _spacy_models:
         print(f"Loading spaCy model for evaluation: {model_name}")
-        _spacy_models[model_name] = spacy.load(model_name)
+        _spacy_models[model_name] = spacy.load(model_name, disable=[
+        "tagger",
+        "parser",
+        "lemmatizer",
+        "attribute_ruler"
+    ])
     nlp = _spacy_models[model_name]
     
     pred_doc = nlp(text)
@@ -58,14 +66,35 @@ def spacy_detection(text, allowed_labels, model_name="en_core_web_lg"):
             pred_spans.add((ent.start_char, ent.end_char, normalized))
     return pred_spans
 
+@lru_cache(maxsize=8)
+def get_optimized_presidio_engine(model_name: str = "en_core_web_lg") -> AnalyzerEngine:
+    """
+    Creates a thread-safe, cached Presidio Analyzer instance operating 
+    on a stripped-down, high-performance spaCy pipeline.
+    """
+    # 1. Load spaCy explicitly with heavy, unused sub-components disabled
+    # (Just like you did in your native spaCy wrapper)
+    nlp = spacy.load(
+        model_name,
+        disable=["tagger", "parser", "lemmatizer", "attribute_ruler"]
+    )
+    
+    # 2. Configure Presidio's underlying SpacyNlpEngine configuration manually
+    # We pass the pre-loaded, stripped nlp instance as a pre-warmed model map
+    nlp_engine = SpacyNlpEngine(models=[{"lang_code": "en", "model_name": model_name}])
+    nlp_engine.nlp = {"en": nlp}
+    
+    # 3. Supply the optimized engine configuration directly into the AnalyzerEngine
+    return AnalyzerEngine(nlp_engine=nlp_engine)
+
+
 def presidio_anonymization_detection(text, allowed_labels, model_name="en_core_web_lg"):
-    '''Detect entities in text using Microsoft Presidio AnalyzerEngine.
-    Returns a set of (start, end, label) spans.'''
-    global _presidio_engine
-    if _presidio_engine is None:
-        _presidio_engine = AnalyzerEngine()
-        print("Running Presidio Anonymization Detection...with default model en_core_web_lg")
-    engine = _presidio_engine
+    """
+    Detect entities in text using Microsoft Presidio AnalyzerEngine.
+    Returns a set of (start, end, label) spans.
+    """
+    # Retrieve our highly optimized and cached instance instantly
+    engine = get_optimized_presidio_engine(model_name)
 
     # Request only Presidio types that map to our allowed labels
     presidio_entities = [
@@ -73,6 +102,7 @@ def presidio_anonymization_detection(text, allowed_labels, model_name="en_core_w
         for presidio_type, project_label in _PRESIDIO_LABEL_MAP.items()
         if project_label in allowed_labels
     ]
+    
     results = engine.analyze(text=text, entities=presidio_entities, language="en")
 
     pred_spans = set()
@@ -80,25 +110,32 @@ def presidio_anonymization_detection(text, allowed_labels, model_name="en_core_w
         label = _PRESIDIO_LABEL_MAP.get(result.entity_type)
         if label and label in allowed_labels:
             pred_spans.add((result.start, result.end, label))
+            
     return pred_spans
 
 
 
 def evaluation(detection, dataset, comparable_golds, allowed_labels,
-                     max_errors, model_name="en_core_web_lg"):
+                     max_errors, model_name="en_core_web_lg", shared_cache_name=None):
     '''Evaluate NER performance on the dataset. 
     Returns TP, FP, FN counts and error samples.'''
 
-    cache_payload = {
-        "detection": detection.__name__,
+    base_payload = {
         "dataset": dataset,
         "comparable_golds": comparable_golds,
         "max_errors": max_errors,
         "allowed_labels": allowed_labels,
-        "model_name": model_name,
         "commit_hash": get_git_commit_hash('.')
     }
-    cache_file = cache_file_from_payload(__file__, cache_payload)
+    run_cache_name = (
+        str(shared_cache_name)
+        if shared_cache_name
+        else cache_file_from_payload(__file__, base_payload).stem
+    )
+    cache_dir = Path(__file__).parent / ".cache"
+    cache_dir.mkdir(exist_ok=True)
+    safe_model_name = str(model_name).replace("/", "_")
+    cache_file = cache_dir / f"{run_cache_name}__{detection.__name__}__{safe_model_name}.pkl"
 
     # Check if cache exists
     if cache_file.exists():
