@@ -30,6 +30,7 @@ _presidio_engine = None
 # Mapping from Presidio entity types to project label schema
 _PRESIDIO_LABEL_MAP = {
     "PERSON": "PERSON",
+    "ORGANIZATION": "ORG",
     "LOCATION": "LOCATION",
     "EMAIL_ADDRESS": "EMAIL",
     "PHONE_NUMBER": "PHONE",
