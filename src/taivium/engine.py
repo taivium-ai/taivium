@@ -155,16 +155,34 @@ API_KEY_REGEX = re.compile(
 # Label normalization
 # -----------------------------
 def normalize_label(label: str) -> str:
-    """Normalizes entity labels to a consistent set
-        (e.g., GPE and LOC → LOCATION)."""
-    mapping = {
-        "GPE": "LOCATION",
-        "LOC": "LOCATION",
-        "PERSON": "PERSON",
-        "ORG": "ORG",
-    }
-    return mapping.get(label, label)
+    """Normalizes internal NLP/Regex entity labels to match the 
+    canonical evaluation schema taxonomy exactly.
+    """
+    if not label:
+        return "UNKNOWN"
 
+    # Standardize incoming labels to prevent case mismatches
+    lookup = label.strip().upper()
+
+    mapping = {
+        # 1. Map spaCy base elements directly to explicit schema requirements
+        "GPE": "COUNTRY",       # Geopolitical entities are almost always Countries/States
+        "LOC": "LOCATION",      # General fallback
+        
+        # 2. Correct internal Regex outputs to match the evaluation schema keys
+        "PHONE": "TEL",          # The evaluation schema expects 'TEL', not 'PHONE'
+        "PHONE_NUMBER": "TEL",
+        "EMAIL_ADDRESS": "EMAIL",
+        
+        # 3. Align technical/infrastructure keys out to evaluation targets
+        "IP_ADDRESS": "IP",      # Maps your internal regex engine key -> evaluation 'IP'
+        "DATE_TIME": "DATE",     # Maps internal dates -> evaluation 'DATE'
+        "US_SSN": "SOCIALNUMBER", # Maps internal SSN -> evaluation 'SOCIALNUMBER'
+    }
+    
+    # Return the mapped evaluation token if found; otherwise keep the original string
+    # This automatically preserves explicit tags like 'BUILDING', 'CITY', 'ZIPCODE', etc.
+    return mapping.get(lookup, label)
 
 # -----------------------------
 # Evidence detectors

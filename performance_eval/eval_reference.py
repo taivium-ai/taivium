@@ -6,22 +6,19 @@ import logging
 import os
 import pickle
 import time
-import spacy
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
 from functools import lru_cache
 from pathlib import Path
 from presidio_analyzer import AnalyzerEngine
 from taivium import Taivium
-from taivium.engine import normalize_label
+from taivium.engine import normalize_label, get_spacy_model
 from presidio_analyzer.nlp_engine import SpacyNlpEngine
 from tqdm import tqdm
 from .utility import compute_prf, cache_file_from_payload, get_git_commit_hash
 
 logger = logging.getLogger(__name__)
 
-# Module-level cache for spaCy models
-_spacy_models = {}
 # Module-level cache for Taivium engines (keyed by spaCy model)
 _taivium_engines = {}
 # Module-level cache for Presidio AnalyzerEngine
@@ -81,16 +78,7 @@ def taivium_detection(text, allowed_labels, model_name="en_core_web_sm"):
 
 def spacy_detection(text, allowed_labels, model_name="en_core_web_lg"):
     '''Detect entities in text using spaCy NER model. Returns a set of (start, end, label) spans.'''
-    # Load model only once, reuse on subsequent calls
-    if model_name not in _spacy_models:
-        print(f"Loading spaCy model for evaluation: {model_name}")
-        _spacy_models[model_name] = spacy.load(model_name, exclude=[
-        "tagger",
-        "parser",
-        "lemmatizer",
-        "attribute_ruler"
-    ])
-    nlp = _spacy_models[model_name]
+    nlp = get_spacy_model(model_name)
     
     pred_doc = nlp(text)
     pred_spans = set()
@@ -108,10 +96,7 @@ def get_optimized_presidio_engine(model_name: str = "en_core_web_lg") -> Analyze
     """
     # 1. Load spaCy explicitly with heavy, unused sub-components disabled
     # (Just like you did in your native spaCy wrapper)
-    nlp = spacy.load(
-        model_name,
-        exclude=["tagger", "parser", "lemmatizer", "attribute_ruler"]
-    )
+    nlp = get_spacy_model(model_name)
     
     # 2. Configure Presidio's underlying SpacyNlpEngine configuration manually
     # We pass the pre-loaded, stripped nlp instance as a pre-warmed model map
