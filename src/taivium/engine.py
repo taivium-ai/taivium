@@ -234,7 +234,7 @@ RECURRENCE_ALLOWED = {
 }
 
 
-def collect_evidence(
+def collect_evidence(  # pylint: disable=too-many-arguments
     text: str,
     *,
     spacy_model_name: str = "en_core_web_sm",
@@ -1010,7 +1010,7 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         # Both salt and custom hash length
         engine = Taivium(id_salt="tenant_1234", id_hash_len=24)
     """
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         policy_engine: Optional[PolicyEngine] = None,
         session_store: Optional[SessionStore] = None,
@@ -1367,7 +1367,7 @@ def module_engine_process(text: str, options: Any = None) -> "Dict[str, Any]":
     # Extract tenant_id if present (used for per-tenant session store and ID salt)
     tenant_id = parsed_options.pop("tenant_id", None)
     session_store = _build_tenant_session_store(tenant_id, _logger)
-    
+
     # Use tenant_id as automatic id_salt if not explicitly provided by user
     # This ensures different tenants get different anonymized IDs for the same content
     if tenant_id and not parsed_options.get("id_salt"):

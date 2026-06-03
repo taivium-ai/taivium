@@ -8,7 +8,7 @@ from typing import Iterable
 
 logger = logging.getLogger("taivium.audit")
 
-# pylint: disable=too-many-arguments
+# pylint: disable=too-many-arguments,too-many-positional-arguments
 def log_audit_event(
     operation: str,
     session_id: str,

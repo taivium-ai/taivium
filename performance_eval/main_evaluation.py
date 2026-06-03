@@ -1,7 +1,6 @@
 '''Main evaluation script for running entity detection evaluations on specified datasets and label profiles.
 This script loads the specified dataset and label profile, runs evaluations using both spaCy and Taivium, and saves the results and error samples. It also computes and prints delta matrices comparing the models'''
 import argparse
-import logging
 import os
 import sys
 from pathlib import Path
@@ -9,63 +8,25 @@ from pathlib import Path
 import tqdm
 
 
-def _load_dotenv(path: Path) -> None:
-    """Load .env variables without overriding already-exported environment values."""
-    if not path.is_file():
-        return
-    with path.open(encoding="utf-8") as dotenv_file:
-        for raw_line in dotenv_file:
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            key = key.strip()
-            value = value.strip().strip('"').strip("'")
-            if key and key not in os.environ:
-                os.environ[key] = value
-
-
-def _resolve_log_level(level_name: str | None, default_level: int) -> int:
-    """Resolve a logging level name to its numeric value, with fallback."""
-    if not level_name:
-        return default_level
-    resolved = getattr(logging, level_name.strip().upper(), None)
-    if isinstance(resolved, int):
-        return resolved
-    return default_level
-
-
-def _configure_logging_from_env() -> None:
-    """Configure root and audit logger levels from environment variables.
-
-    Supported variables:
-        LOG_LEVEL: Root logger level (default: WARNING)
-        TAIVIUM_AUDIT_LOG_LEVEL: taivium.audit logger level (default: LOG_LEVEL)
-    """
-    root_level = _resolve_log_level(os.getenv("LOG_LEVEL"), logging.WARNING)
-    logging.basicConfig(level=root_level)
-
-    audit_level = _resolve_log_level(os.getenv("TAIVIUM_AUDIT_LOG_LEVEL"), root_level)
-    logging.getLogger("taivium.audit").setLevel(audit_level)
-
-
 # Ensure project root is importable when run as a script (e.g., via VS Code debugger)
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-_load_dotenv(Path(PROJECT_ROOT) / ".env")
-
 from performance_eval.utility import print_delta_matrix_tables, \
                                     save_evaluation_results, save_delta_matrices, \
                                     plot_label_distribution, print_timing_summary, \
-                                    cache_file_from_payload, get_git_commit_hash
+                                    cache_file_from_payload, get_git_commit_hash, \
+                                    load_dotenv, configure_logging_from_env, \
+                                    get_label_distribution_path
+
+load_dotenv(Path(PROJECT_ROOT) / ".env")
 from performance_eval.eval_datasets import DATASET_LIST, load_cached_dataset, LABEL_PROFILES
 from performance_eval.eval_reference import spacy_detection, taivium_detection, \
-    presidio_anonymization_detection, evaluation
+    presidio_detection, evaluation
 
 def main() -> None:
-    _configure_logging_from_env()
+    configure_logging_from_env()
 
     parser = argparse.ArgumentParser(
         description="Evaluate framework, choose dataset and label profile and error saving.")
@@ -121,18 +82,15 @@ def main() -> None:
     print(f"Shared run cache key: {run_cache_name}")
 
     # Plot and save label distribution for the evaluation split
-    _dist_path = __import__('pathlib').Path(__file__).parent / ".cache" / \
-        f"{args.dataset.replace('/', '_')}_{args.profile}_label_distribution.png"
+    _dist_path = get_label_distribution_path(__file__, args.dataset, args.profile)
     plot_label_distribution(comparable_golds, args.dataset, args.profile, _dist_path)
     print(f"Label distribution saved to: {_dist_path}")
 
     settings_results = [
         {"metrics": {}, "detection_func": spacy_detection, "spacy_model_name": "en_core_web_sm"},
-        {"metrics": {}, "detection_func": spacy_detection, "spacy_model_name": "en_core_web_md"},
         {"metrics": {}, "detection_func": spacy_detection, "spacy_model_name": "en_core_web_lg"},
-        {"metrics": {}, "detection_func": presidio_anonymization_detection, "spacy_model_name": "en_core_web_lg"},
+        {"metrics": {}, "detection_func": presidio_detection, "spacy_model_name": "en_core_web_lg"},
         {"metrics": {}, "detection_func": taivium_detection, "spacy_model_name": "en_core_web_sm"},
-        {"metrics": {}, "detection_func": taivium_detection, "spacy_model_name": "en_core_web_md"},
         {"metrics": {}, "detection_func": taivium_detection, "spacy_model_name": "en_core_web_lg"},
     ]
 

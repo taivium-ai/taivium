@@ -121,7 +121,7 @@ def get_optimized_presidio_engine(model_name: str = "en_core_web_lg") -> Analyze
     return AnalyzerEngine(nlp_engine=nlp_engine)
 
 
-def presidio_anonymization_detection(text, allowed_labels, model_name="en_core_web_lg"):
+def presidio_detection(text, allowed_labels, model_name="en_core_web_lg"):
     """
     Detect entities in text using Microsoft Presidio AnalyzerEngine.
     Returns a set of (start, end, label) spans.

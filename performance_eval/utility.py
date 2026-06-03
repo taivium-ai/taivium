@@ -5,6 +5,7 @@ import numpy as np
 import hashlib
 import subprocess
 import logging
+import os
 from collections import Counter
 from pathlib import Path
 import matplotlib
@@ -12,6 +13,63 @@ matplotlib.use("Agg")  # non-interactive backend for file output
 import matplotlib.pyplot as plt
 
 logger = logging.getLogger(__name__)
+
+
+def load_dotenv(path: Path) -> None:
+    """Load .env variables without overriding already-exported environment values."""
+    if not path.is_file():
+        return
+    with path.open(encoding="utf-8") as dotenv_file:
+        for raw_line in dotenv_file:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+def resolve_log_level(level_name: str | None, default_level: int) -> int:
+    """Resolve a logging level name to its numeric value, with fallback."""
+    if not level_name:
+        return default_level
+    resolved = getattr(logging, level_name.strip().upper(), None)
+    if isinstance(resolved, int):
+        return resolved
+    return default_level
+
+
+def configure_logging_from_env() -> None:
+    """Configure root and audit logger levels from environment variables.
+
+    Supported variables:
+        LOG_LEVEL: Root logger level (default: WARNING)
+        TAIVIUM_AUDIT_LOG_LEVEL: taivium.audit logger level (default: LOG_LEVEL)
+    """
+    root_level = resolve_log_level(os.getenv("LOG_LEVEL"), logging.WARNING)
+    logging.basicConfig(level=root_level)
+
+    audit_level = resolve_log_level(os.getenv("TAIVIUM_AUDIT_LOG_LEVEL"), root_level)
+    logging.getLogger("taivium.audit").setLevel(audit_level)
+
+
+def get_label_distribution_path(module_file: str, dataset: str, profile: str) -> Path:
+    """Return the path for saving label distribution plot.
+    
+    Args:
+        module_file: The __file__ attribute of the calling module.
+        dataset: Dataset name (may contain forward slashes).
+        profile: Label profile name.
+    
+    Returns:
+        Path to the label distribution PNG file.
+    """
+    cache_dir = Path(module_file).parent / ".cache"
+    cache_dir.mkdir(exist_ok=True)
+    safe_dataset = dataset.replace("/", "_")
+    return cache_dir / f"{safe_dataset}_{profile}_label_distribution.png"
 
 
 def _stable_serialize(value):
