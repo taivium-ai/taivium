@@ -13,7 +13,8 @@ from performance_eval.utility import print_delta_matrix_tables, \
                                     save_evaluation_results, save_delta_matrices, \
                                     plot_label_distribution
 from performance_eval.eval_datasets import DATASET_LIST, load_cached_dataset, LABEL_PROFILES
-from performance_eval.eval_reference import spacy_detection, taivium_detection, evaluation
+from performance_eval.eval_reference import spacy_detection, taivium_detection, \
+    presidio_anonymization_detection, evaluation
 
 parser = argparse.ArgumentParser(
     description="Evaluate framework, choose dataset and label profile and error saving.")
@@ -57,6 +58,7 @@ settings_results = \
         {"metrics":{},"detection_func": spacy_detection, "spacy_model_name": "en_core_web_sm"},
         # {"metrics":{},"detection_func": spacy_detection, "spacy_model_name": "en_core_web_md"},
         {"metrics":{},"detection_func": spacy_detection, "spacy_model_name": "en_core_web_lg"},
+        {"metrics":{},"detection_func": presidio_anonymization_detection, "spacy_model_name": "en_core_web_lg"},
         {"metrics":{},"detection_func": taivium_detection, "spacy_model_name": "en_core_web_sm"},
         # {"metrics":{},"detection_func": taivium_detection, "spacy_model_name": "en_core_web_md"},
         # {"metrics":{},"detection_func": taivium_detection, "spacy_model_name": "en_core_web_lg"},

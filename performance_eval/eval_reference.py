@@ -5,6 +5,7 @@ Taivium's performance on the same datasets and label profiles.
 import logging
 import pickle
 import spacy
+from presidio_analyzer import AnalyzerEngine
 from taivium import Taivium
 from taivium.engine import normalize_label
 from .utility import compute_prf, cache_file_from_payload, get_git_commit_hash
@@ -15,6 +16,16 @@ logger = logging.getLogger(__name__)
 _spacy_models = {}
 # Module-level cache for Taivium engine
 _taivium_engine = None
+# Module-level cache for Presidio AnalyzerEngine
+_presidio_engine = None
+
+# Mapping from Presidio entity types to project label schema
+_PRESIDIO_LABEL_MAP = {
+    "PERSON": "PERSON",
+    "LOCATION": "LOCATION",
+    "EMAIL_ADDRESS": "EMAIL",
+    "PHONE_NUMBER": "PHONE",
+}
 
 def taivium_detection(text, allowed_labels, model_name="en_core_web_sm"):
     '''Detect entities in text using Taivium. Returns a set of (start, end, label) spans.'''
@@ -44,6 +55,32 @@ def spacy_detection(text, allowed_labels, model_name="en_core_web_lg"):
         if normalized in allowed_labels:
             pred_spans.add((ent.start_char, ent.end_char, normalized))
     return pred_spans
+
+def presidio_anonymization_detection(text, allowed_labels, model_name="en_core_web_lg"):
+    '''Detect entities in text using Microsoft Presidio AnalyzerEngine.
+    Returns a set of (start, end, label) spans.'''
+    print("Running Presidio Anonymization Detection...with deafault model en_core_web_lg")
+    global _presidio_engine
+    if _presidio_engine is None:
+        _presidio_engine = AnalyzerEngine()
+    engine = _presidio_engine
+
+    # Request only Presidio types that map to our allowed labels
+    presidio_entities = [
+        presidio_type
+        for presidio_type, project_label in _PRESIDIO_LABEL_MAP.items()
+        if project_label in allowed_labels
+    ]
+    results = engine.analyze(text=text, entities=presidio_entities, language="en")
+
+    pred_spans = set()
+    for result in results:
+        label = _PRESIDIO_LABEL_MAP.get(result.entity_type)
+        if label and label in allowed_labels:
+            pred_spans.add((result.start, result.end, label))
+    return pred_spans
+
+
 
 def evaluation(detection, dataset, comparable_golds, allowed_labels,
                      max_errors, model_name="en_core_web_lg"):
