@@ -185,6 +185,99 @@ def _copy_trend_plot_if_exists(
     return f"assets/{source.name}"
 
 
+def _history_filename(dataset: str, profile: str) -> str:
+    safe_dataset = dataset.replace("/", "_")
+    return f"{safe_dataset}_{profile}_performance_history.json"
+
+
+def _load_history(cache_dir: Path, dataset: str, profile: str) -> list[dict[str, Any]]:
+    history_path = cache_dir / _history_filename(dataset, profile)
+    if not history_path.exists():
+        return []
+    try:
+        with open(history_path, "r", encoding="utf-8") as history_file:
+            data = json.load(history_file)
+        return data if isinstance(data, list) else []
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def _latest_metric_deltas(history: list[dict[str, Any]], metric: str) -> dict[str, float | None]:
+    """Return per-model deltas between latest and previous run for a metric."""
+    if len(history) < 2:
+        return {}
+
+    previous_models = history[-2].get("models", {})
+    current_models = history[-1].get("models", {})
+    deltas: dict[str, float | None] = {}
+    for model_name, model_values in current_models.items():
+        current_value = model_values.get(metric)
+        previous_value = previous_models.get(model_name, {}).get(metric)
+        if isinstance(current_value, (int, float)) and isinstance(previous_value, (int, float)):
+            deltas[model_name] = float(current_value) - float(previous_value)
+        else:
+            deltas[model_name] = None
+    return deltas
+
+
+def _render_last_runs_table(history: list[dict[str, Any]], model_labels: list[str]) -> str:
+    if not history:
+        return '<p class="meta">No history file found yet.</p>'
+
+    recent_runs = history[-5:]
+    headers = "".join(f"<th>{html.escape(label)}</th>" for label in model_labels)
+    rows = []
+    for run in recent_runs:
+        timestamp = str(run.get("timestamp", "-")).replace("T", " ").replace("Z", " UTC")
+        models = run.get("models", {})
+        cells = []
+        for label in model_labels:
+            f1_value = models.get(label, {}).get("f1")
+            if isinstance(f1_value, (int, float)):
+                cells.append(f"<td>{f1_value:.4f}</td>")
+            else:
+                cells.append("<td>-</td>")
+        rows.append(f"<tr><th>{html.escape(timestamp)}</th>{''.join(cells)}</tr>")
+
+    return (
+        '<div class="table-wrap"><table class="trend-mini">'
+        f'<thead><tr><th>Run</th>{headers}</tr></thead>'
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table></div>"
+    )
+
+
+def _render_trend_panel(
+    trend_plot_rel: str | None,
+    history: list[dict[str, Any]],
+    model_labels: list[str],
+) -> str:
+    runs_table_html = _render_last_runs_table(history, model_labels)
+    if trend_plot_rel:
+        return (
+            '<section class="panel">'
+            '<h2>Performance Trend</h2>'
+            '<p class="meta">Historical trend for F1 and timing across runs.</p>'
+            '<div class="trend-grid">'
+            f'<img src="{html.escape(trend_plot_rel)}" alt="Performance trend chart" '
+            'style="width:100%;border:1px solid var(--line);border-radius:10px;" />'
+            '<div>'
+            '<h3>Last 5 Runs (F1)</h3>'
+            f'{runs_table_html}'
+            '</div>'
+            '</div>'
+            '</section>'
+        )
+    return (
+        '<section class="panel">'
+        '<h2>Performance Trend</h2>'
+        '<p class="meta">Trend chart not found yet. Run main_evaluation.py at least once with trend enabled.</p>'
+        '<h3>Last 5 Runs (F1)</h3>'
+        f'{runs_table_html}'
+        '</section>'
+    )
+
+
 def generate_html(cache_dir: Path, output_file: Path) -> None:
     latest_delta = _find_latest_delta(cache_dir)
     with open(latest_delta, "r", encoding="utf-8") as f:
@@ -200,10 +293,22 @@ def generate_html(cache_dir: Path, output_file: Path) -> None:
     dataset = next((r["dataset"] for r in model_rows if r["dataset"] != "-"), "-")
     profile = next((r["profile"] for r in model_rows if r["profile"] != "-"), "-")
     generated = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    trend_plot_rel = _copy_trend_plot_if_exists(cache_dir, output_file, dataset, profile)
+    history = _load_history(cache_dir, dataset, profile)
+    trend_labels = [f"{row['detector']} ({row['model']})" for row in model_rows]
+    f1_deltas = _latest_metric_deltas(history, "f1")
+    timing_deltas = _latest_metric_deltas(history, "timing_ms")
 
     summary_rows = []
     for row in model_rows:
         metrics = row.get("metrics", {})
+        model_label = f"{row['detector']} ({row['model']})"
+        f1_delta = f1_deltas.get(model_label)
+        timing_delta = timing_deltas.get(model_label)
+        f1_delta_text = f"{f1_delta:+.4f}" if isinstance(f1_delta, (int, float)) else "-"
+        timing_delta_text = (
+            f"{timing_delta:+.2f}" if isinstance(timing_delta, (int, float)) else "-"
+        )
         summary_rows.append(
             "<tr>"
             f"<td>{html.escape(row['detector'])}</td>"
@@ -211,7 +316,9 @@ def generate_html(cache_dir: Path, output_file: Path) -> None:
             f"<td>{_safe_float(metrics.get('precision'))}</td>"
             f"<td>{_safe_float(metrics.get('recall'))}</td>"
             f"<td>{_safe_float(metrics.get('f1'))}</td>"
+            f"<td>{html.escape(f1_delta_text)}</td>"
             f"<td>{html.escape(str(row['timing_ms']))}</td>"
+            f"<td>{html.escape(timing_delta_text)}</td>"
             "</tr>"
         )
 
@@ -243,8 +350,12 @@ def generate_html(cache_dir: Path, output_file: Path) -> None:
     .meta {{ color: var(--muted); margin: 0; }}
     .panel {{ margin-top: 18px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }}
     h2, h3 {{ margin: 0 0 10px; }}
+    .trend-grid {{ display: grid; grid-template-columns: 2fr 1fr; gap: 14px; align-items: start; }}
     .table-wrap {{ overflow: auto; }}
     table {{ width: 100%; border-collapse: collapse; min-width: 920px; }}
+    table.trend-mini {{ min-width: 560px; }}
+    table.trend-mini th, table.trend-mini td {{ font-size: 12px; padding: 6px 8px; }}
+    @media (max-width: 980px) {{ .trend-grid {{ grid-template-columns: 1fr; }} }}
     th, td {{ border: 1px solid var(--line); padding: 8px 10px; text-align: right; font-variant-numeric: tabular-nums; }}
     th:first-child, td:first-child {{ text-align: left; }}
     thead th {{ background: #f0f5fc; position: sticky; top: 0; z-index: 1; }}
@@ -273,7 +384,7 @@ def generate_html(cache_dir: Path, output_file: Path) -> None:
       <div class=\"table-wrap\"><table>
         <thead>
           <tr>
-            <th>Detector</th><th>Model</th><th>Precision</th><th>Recall</th><th>F1</th><th>Timing (ms/sample)</th>
+                        <th>Detector</th><th>Model</th><th>Precision</th><th>Recall</th><th>F1</th><th>F1 Δ</th><th>Timing (ms/sample)</th><th>Timing Δ (ms)</th>
           </tr>
         </thead>
         <tbody>
@@ -281,6 +392,8 @@ def generate_html(cache_dir: Path, output_file: Path) -> None:
         </tbody>
       </table></div>
     </section>
+
+        {_render_trend_panel(trend_plot_rel, history, trend_labels)}
 
     <section class=\"panel\">
       <h2>Comparison Matrices</h2>
