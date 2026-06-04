@@ -156,12 +156,23 @@ IP_REGEX = re.compile(
     r"(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\b"
 )
 
-# Date formats: YYYY-MM-DD, MM/DD/YYYY (conservative)
+# Date formats: Expanded to handle times, month names, and multiple separators
 DATE_REGEX = re.compile(
     r"\b(?:"
+    # Numeric dates: YYYY-MM-DD, MM/DD/YYYY, DD/MM/YYYY, DD.MM.YYYY
     r"\d{4}[-/]\d{1,2}[-/]\d{1,2}"
-    r"|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}"
-    r")\b"
+    r"|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}"
+    # Time only: HH:MM, HH:MM:SS
+    r"|(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?"
+    # Month name + day: "June 4", "4 June", "21st December", etc.
+    r"|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|"
+    r"January|February|March|April|May|June|July|August|September|October|November|December)"
+    r"\s+\d{1,2}(?:st|nd|rd|th)?"
+    r"|(\d{1,2}(?:st|nd|rd|th)?)\s+"
+    r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|"
+    r"January|February|March|April|May|June|July|August|September|October|November|December)"
+    r")\b",
+    re.IGNORECASE
 )
 
 # Updated to explicitly separate pure digit strings from mixed alphanumeric strings
