@@ -213,7 +213,20 @@ SOCIALNUMBER_REGEX = re.compile(
     r")",
     re.IGNORECASE
 )
-# -----------------------------
+
+# Usernames: handles a wide variety of formats from the dataset
+# - Pure alphanumeric: 'paaltwvkjuijwbj957', 'wsfdkmi9214'
+# - With separators: 'maria-rosaria.amardi1962', 'yeganeh-afchar'
+# - Starting with digits: '2005zheng.monckton', '1992marilynn.vallbona'
+# - Short codes: 'G46', 'T98', '43CU', 'BG', 'PT'
+# - Non-ASCII: 'üzmez', 'trí.löwe18'
+# Pattern: 2+ chars, alphanumeric (including Unicode) plus . - _ (exclude pure digits)
+USERNAME_REGEX = re.compile(
+    r"\b(?![\d._-]+\b)"  # Negative lookahead: exclude pure digits/separators
+    r"[a-zA-Z0-9._\-\xC0-\xFF]{2,}"  # 2+ chars of alphanumeric, dot, hyphen, underscore, + non-ASCII
+    r"\b"
+)
+
 # -----------------------------
 # Label normalization
 # -----------------------------
