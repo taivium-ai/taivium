@@ -39,10 +39,11 @@ def test_regex_evidence_supports_multiple_date_formats():
 
 
 def test_regex_evidence_requires_dashed_socialnumber_format():
-    text = "Dashed SSN 123-45-6789 and plain 123456789"
+    text = "Dashed SSN 123-45-6789 and plain 123456789 and too short 12345"
 
     evidence = eng.regex_evidence(text)
     ssn_texts = [text[item.start:item.end] for item in evidence if item.label == "SOCIALNUMBER"]
 
     assert "123-45-6789" in ssn_texts
-    assert "123456789" not in ssn_texts
+    assert "123456789" in ssn_texts       # 9-digit national IDs are now supported
+    assert "12345" not in ssn_texts       # too short (5 digits) must not match

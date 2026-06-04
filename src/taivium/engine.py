@@ -146,41 +146,53 @@ class Entity:
 # Regex detectors (PII / secrets)
 # -----------------------------
 EMAIL_REGEX = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
-PHONE_REGEX = re.compile(r"\+?\d[\d\s\-]{7,}\d")
+PHONE_REGEX = re.compile(r"\+?\d[\d\s\-\.]{7,}\d")
 API_KEY_REGEX = re.compile(
     r"(sk-[a-zA-Z0-9]{10,}|api[_-]?key\s*[:=]\s*[a-zA-Z0-9]+)", re.I)
 
-# IPv4 only (conservative)
+# IPv4 + IPv6 (full 8-group form)
 IP_REGEX = re.compile(
     r"\b(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
     r"(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\b"
+    r"|[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){7}"  # Full IPv6: 8 colon-separated hex groups
 )
 
-# Date formats: Expanded to handle times, month names, and multiple separators
+# Date formats: numeric, month names, times with AM/PM, o'clock
 DATE_REGEX = re.compile(
     r"\b(?:"
     # Numeric dates: YYYY-MM-DD, MM/DD/YYYY, DD/MM/YYYY, DD.MM.YYYY
     r"\d{4}[-/]\d{1,2}[-/]\d{1,2}"
     r"|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}"
-    # Time only: HH:MM, HH:MM:SS
-    r"|(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?"
-    # Month name + day: "June 4", "4 June", "21st December", etc.
-    r"|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|"
-    r"January|February|March|April|May|June|July|August|September|October|November|December)"
-    r"\s+\d{1,2}(?:st|nd|rd|th)?"
-    r"|(\d{1,2}(?:st|nd|rd|th)?)\s+"
-    r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|"
-    r"January|February|March|April|May|June|July|August|September|October|November|December)"
+    # Month name + day or year: "June 4", "June/88", "January-2026"
+    r"|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?"
+    r"|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+    r"(?:\s+\d{1,2}(?:st|nd|rd|th)?|[-/]\d{2,4})"
+    # Day + month name: "4th June", "21st December"
+    r"|\d{1,2}(?:st|nd|rd|th)?\s+"
+    r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?"
+    r"|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+    # Times with optional seconds and optional AM/PM: 3:07am, 10:15 PM, 22:41
+    r"|(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s*[ap]m)?"
+    # Hour-only with AM/PM: "1 AM", "8 PM", "3am"
+    r"|\d{1,2}\s*[ap]m"
+    # o'clock: "5 o'clock", "13 o'clock"
+    r"|\d{1,2}\s*o'clock"
     r")\b",
     re.IGNORECASE
 )
 
-# Updated to explicitly separate pure digit strings from mixed alphanumeric strings
+# Government/document IDs: SSN, passports, national IDs (CURP, etc.)
 SOCIALNUMBER_REGEX = re.compile(
     r"\b(?:"
-    r"\d{3}-\d{2}-\d{4}"                               # 1. Pure numbers MUST be dashed SSNs
-    r"|(?:[A-Z\d]*[A-Z][A-Z\d]*\d[A-Z\d]*|[A-Z\d]*\d[A-Z\d]*[A-Z][A-Z\d]*){5,11}" # 2. Mixed IDs MUST have both text & digits
-    r")\b", 
+    r"\d{3}-\d{2}-\d{4}"                          # US SSN: 123-45-6789
+    r"|[A-Z]{2,5}\d{5,10}[A-Z]{1,3}\d{1,4}"       # ID letters+digits+letters+digits: CADIJ958032CM645
+    r"|[A-Z]{2,5}\d{5,10}[A-Z]{0,3}"              # Passport: YJ70705OQ, SU2014976, EP78982MJ
+    r"|\d{1,3}[A-Z]{2,4}\d{4,8}"                  # Hybrid: 32BV67680, 79HN36345
+    # CURP-style: LETTERS[digit] SEP DIGITS SEP LETTERS-OR-DIGIT SEP DIGITS
+    # Handles dots (PIEN9.703185.PL.492), spaces (AUSTI 711154 AS 852), dashes (LILI--456302-9-483)
+    r"|[A-Z]{3,6}\d?[.\- ]+\d{4,8}[.\- ]+[A-Z0-9]{1,3}[.\- ]+\d{2,4}"
+    r"|\d{9,10}"                                   # 9-10 digit national IDs: 236897938, 0090106547
+    r")\b",
     re.IGNORECASE
 )
 # -----------------------------

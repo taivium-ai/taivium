@@ -117,22 +117,32 @@ def main() -> None:
         
         # Try to load cached metrics for spaCy and Presidio
         for i, detection_name in enumerate(["spacy_detection", "presidio_detection"]):
-            # Look for JSON files with metrics in cache directory
-            pattern = f"{detection_name}*metrics*.json"
+            # Look for *_report.json files in cache directory
+            pattern = f"*{detection_name}*_report.json"
             matches = list(cache_dir.glob(pattern))
             if matches:
                 # Sort by modification time and use newest
                 matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-                metrics_file = matches[0]
+                report_file = matches[0]
                 try:
-                    with open(metrics_file, 'r') as f:
-                        metrics = json.load(f)
+                    with open(report_file, 'r') as f:
+                        report = json.load(f)
+                    metrics = report.get("metrics", {})
                     settings_results[i]["metrics"] = metrics
-                    settings_results[i]["cache_file"] = str(metrics_file)
+                    settings_results[i]["cache_file"] = report_file
                     settings_results[i]["total_time"] = 0  # Cached, no actual runtime
-                    print(f"  ✓ Loaded cached {detection_name}: P={metrics.get('precision', 'N/A'):.3f}, R={metrics.get('recall', 'N/A'):.3f}")
+                    settings_results[i]["n_samples"] = 0
+                    precision = metrics.get('precision', 'N/A')
+                    recall = metrics.get('recall', 'N/A')
+                    if isinstance(precision, (int, float)):
+                        precision = f"{precision:.3f}"
+                    if isinstance(recall, (int, float)):
+                        recall = f"{recall:.3f}"
+                    print(f"  ✓ Loaded cached {detection_name}: P={precision}, R={recall}")
                 except Exception as e:
                     print(f"  ⚠ Could not load cached results for {detection_name}: {e}")
+            else:
+                print(f"  ⚠ No cached results found for {detection_name}")
         
         # Only run Taivium detection
         detections_to_run = [settings_results[2]]
