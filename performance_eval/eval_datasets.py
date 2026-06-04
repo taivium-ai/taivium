@@ -109,6 +109,9 @@ PRIVACY_LABEL_MAP = {
     "DRIVERLICENSE": "SOCIALNUMBER",
     "CARDISSUER": "SOCIALNUMBER",
     "PASS": "SOCIALNUMBER",
+    "US_SSN": "SOCIALNUMBER",           # Presidio US SSN detection
+    "CREDIT_CARD": "SOCIALNUMBER",      # Presidio credit card detection
+    "CRYPTO": "SOCIALNUMBER",           # Presidio cryptocurrency address detection
 }
 
 

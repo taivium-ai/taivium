@@ -181,18 +181,31 @@ DATE_REGEX = re.compile(
     re.IGNORECASE
 )
 
-# Government/document IDs: SSN, passports, national IDs (CURP, etc.)
+# Government/document IDs: SSN, passports, national IDs, credit cards, crypto addresses
 SOCIALNUMBER_REGEX = re.compile(
-    r"\b(?:"
-    r"\d{3}-\d{2}-\d{4}"                          # US SSN: 123-45-6789
-    r"|[A-Z]{2,5}\d{5,10}[A-Z]{1,3}\d{1,4}"       # ID letters+digits+letters+digits: CADIJ958032CM645
-    r"|[A-Z]{2,5}\d{5,10}[A-Z]{0,3}"              # Passport: YJ70705OQ, SU2014976, EP78982MJ
-    r"|\d{1,3}[A-Z]{2,4}\d{4,8}"                  # Hybrid: 32BV67680, 79HN36345
-    # CURP-style: LETTERS[digit] SEP DIGITS SEP LETTERS-OR-DIGIT SEP DIGITS
-    # Handles dots (PIEN9.703185.PL.492), spaces (AUSTI 711154 AS 852), dashes (LILI--456302-9-483)
-    r"|[A-Z]{3,6}\d?[.\- ]+\d{4,8}[.\- ]+[A-Z0-9]{1,3}[.\- ]+\d{2,4}"
-    r"|\d{9,10}"                                   # 9-10 digit national IDs: 236897938, 0090106547
-    r")\b",
+    r"(?:"
+    # Credit card numbers: 13-19 digits with optional separators (Visa/MC/Amex)
+    # Examples: 4532-1234-5678-9010, 4532123456789010, 5234 1234 5678 9010
+    r"\b\d{4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4,7}\b"
+    # SSN with separators: 123-45-6789, 123 45 6789
+    r"|\b\d{3}[\-\s]\d{2}[\-\s]\d{4}\b"
+    # SSN without separators (exactly 9 digits, not part of longer number)
+    r"|\b\d{3}\d{2}\d{4}\b(?!\d)"
+    # Bank account numbers and other numeric IDs: 8-17 consecutive digits
+    r"|\b\d{8,17}\b"
+    # Ethereum addresses: 0x followed by 40 hex characters
+    r"|\b0x[a-fA-F0-9]{40}\b"
+    # Bitcoin and other crypto addresses: 26-35 alphanumeric chars
+    r"|\b[a-km-zA-HJ-NP-Z0-9]{26,35}\b"
+    # Passport/ID: letters followed by digits (2+ letters, 4+ digits)
+    r"|\b[A-Z]{2,5}\d{4,10}\b"
+    # Mixed alphanumeric IDs: 6-12 chars with both letters and digits (passports, IDs)
+    r"|\b(?=[A-Z]*\d)[A-Z\d]{6,12}\b"
+    # Mixed format: 2-4 letters + 4-8 digits, optionally with separators
+    r"|\b[A-Z]{2,4}[\s\-]?\d{4,8}\b"
+    # CURP-style: letters with flexible separators and digits
+    r"|\b[A-Z]{3,6}\d?[\.\-\s]\d{4,8}[\.\-\s][A-Z0-9]{1,3}[\.\-\s]\d{2,4}\b"
+    r")",
     re.IGNORECASE
 )
 # -----------------------------
