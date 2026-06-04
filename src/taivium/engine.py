@@ -164,10 +164,14 @@ DATE_REGEX = re.compile(
     r")\b"
 )
 
-# US SSN only (123-45-6789 format)
-SOCIALNUMBER_REGEX = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
-
-
+# Updated to explicitly separate pure digit strings from mixed alphanumeric strings
+SOCIALNUMBER_REGEX = re.compile(
+    r"\b(?:"
+    r"\d{3}-\d{2}-\d{4}"                               # 1. Pure numbers MUST be dashed SSNs
+    r"|(?:[A-Z\d]*[A-Z][A-Z\d]*\d[A-Z\d]*|[A-Z\d]*\d[A-Z\d]*[A-Z][A-Z\d]*){5,11}" # 2. Mixed IDs MUST have both text & digits
+    r")\b", 
+    re.IGNORECASE
+)
 # -----------------------------
 # -----------------------------
 # Label normalization
