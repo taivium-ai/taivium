@@ -145,7 +145,7 @@ class Entity:
 # -----------------------------
 # Regex detectors (PII / secrets)
 # -----------------------------
-EMAIL_REGEX = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
+EMAIL_REGEX = re.compile(r"[a-zA-Z0-9_.+\-\xC0-\xFF]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
 PHONE_REGEX = re.compile(r"\+?\d[\d\s\-\.]{7,}\d")
 API_KEY_REGEX = re.compile(
     r"(sk-[a-zA-Z0-9]{10,}|api[_-]?key\s*[:=]\s*[a-zA-Z0-9]+)", re.I)
@@ -163,14 +163,15 @@ DATE_REGEX = re.compile(
     # Numeric dates: YYYY-MM-DD, MM/DD/YYYY, DD/MM/YYYY, DD.MM.YYYY
     r"\d{4}[-/]\d{1,2}[-/]\d{1,2}"
     r"|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}"
-    # Month name + day or year: "June 4", "June/88", "January-2026"
+    # Month name + day (with optional ordinal) + optional year: "October 18th, 1980", "June 4", "June/88"
     r"|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?"
     r"|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
-    r"(?:\s+\d{1,2}(?:st|nd|rd|th)?|[-/]\d{2,4})"
-    # Day + month name: "4th June", "21st December"
-    r"|\d{1,2}(?:st|nd|rd|th)?\s+"
+    r"(?:\s+\d{1,2}(?:st|nd|rd|th)?(?:[,\s]+\d{4})?|[-/]\d{2,4})"
+    # Day + optional "of" + month name + optional year: "4th June 2023", "21st of December, 1999"
+    r"|\d{1,2}(?:st|nd|rd|th)?(?:\s+of)?\s+"
     r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?"
     r"|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+    r"(?:[,\s]+\d{4})?"
     # Times with optional seconds and optional AM/PM: 3:07am, 10:15 PM, 22:41
     r"|(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s*[ap]m)?"
     # Hour-only with AM/PM: "1 AM", "8 PM", "3am"
@@ -203,8 +204,12 @@ SOCIALNUMBER_REGEX = re.compile(
     r"|\b(?=[A-Z]*\d)[A-Z\d]{6,12}\b"
     # Mixed format: 2-4 letters + 4-8 digits, optionally with separators
     r"|\b[A-Z]{2,4}[\s\-]?\d{4,8}\b"
-    # CURP-style: letters with flexible separators and digits
-    r"|\b[A-Z]{3,6}\d?[\.\-\s]\d{4,8}[\.\-\s][A-Z0-9]{1,3}[\.\-\s]\d{2,4}\b"
+    # CURP-style with separators: letters + digits + letters + digits
+    r"|\b[A-Z]{3,6}\d?[\.\-\s]+\d{4,8}[\.\-\s]+[A-Z0-9]{1,3}[\.\-\s]+\d{2,4}\b"
+    # CURP continuous (no separators): e.g. 'CADIJ958032CM645', 'FARLE708293FN375'
+    r"|\b[A-Z]{4,6}\d{6,8}[A-Z]{2}\d{3,4}\b"
+    # 3-3-4 format: phone-style IDs annotated as national IDs (e.g. '684 916 3578', '873-878-0248')
+    r"|\b\d{3}[\s\-\.]\d{3}[\s\-\.]\d{4}\b"
     r")",
     re.IGNORECASE
 )
