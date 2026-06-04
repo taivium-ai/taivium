@@ -464,6 +464,30 @@ See [`examples/`](examples/):
 
 ---
 
+## Development & Performance
+
+### Performance Evaluation
+
+Run performance benchmarks against ai4privacy/pii-masking-300k dataset:
+
+```bash
+# Full evaluation (all detectors)
+python3 performance_eval/main_evaluation.py
+
+# Fast iteration (Taivium only, cached baselines)
+python3 performance_eval/main_evaluation.py --skip-baselines
+```
+
+View report: `web/index.html`
+
+**Hardware Environment:**  
+See [HARDWARE.md](HARDWARE.md) for machine specifications and performance metrics.
+
+**Setup Details:**  
+See [`performance_eval/EVALUATION_SETUP.md`](performance_eval/EVALUATION_SETUP.md) for dataset info, detectors, and evaluation methodology.
+
+---
+
 ## Contributing
 
 1. Fork the repo  

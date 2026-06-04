@@ -1,6 +1,7 @@
 '''Main evaluation script for running entity detection evaluations on specified datasets and label profiles.
 This script loads the specified dataset and label profile, runs evaluations using both spaCy and Taivium, and saves the results and error samples. It also computes and prints delta matrices comparing the models'''
 import argparse
+import datetime as dt
 import json
 import os
 import sys
@@ -27,9 +28,63 @@ from performance_eval.utility import print_delta_matrix_tables, \
 
 load_dotenv(Path(PROJECT_ROOT) / ".env")
 from performance_eval.eval_datasets import DATASET_LIST, load_cached_dataset, LABEL_PROFILES
-from performance_eval.eval_reference import spacy_detection, taivium_detection, \
+from performance_eval.eval_reference import taivium_detection, \
     presidio_detection, evaluation
 from performance_eval.generate_report_html import generate_html
+
+
+def _save_latest_report_json(
+    project_root: Path,
+    dataset: str,
+    profile: str,
+    commit_hash: str,
+    settings_results: list[dict],
+) -> Path:
+    """Save one canonical performance report JSON per run.
+
+    The file is overwritten each run and meant to be tracked by git.
+    """
+    results_dir = project_root / "performance_eval" / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    latest_report_path = results_dir / "latest_report.json"
+
+    models: dict[str, dict[str, float | None]] = {}
+    for result in settings_results:
+        detector = result.get("detection_func").__name__
+        model = result.get("spacy_model_name", "unknown")
+        label = f"{detector} ({model})"
+        metrics = result.get("metrics", {})
+        total_time = result.get("total_time")
+        n_samples = result.get("n_samples")
+
+        timing_ms: float | None = None
+        if isinstance(total_time, (int, float)) and isinstance(n_samples, int) and n_samples > 0:
+            timing_ms = (float(total_time) / n_samples) * 1000.0
+
+        models[label] = {
+            "precision": float(metrics.get("precision", 0.0)),
+            "recall": float(metrics.get("recall", 0.0)),
+            "f1": float(metrics.get("f1", 0.0)),
+            "timing_ms": timing_ms,
+        }
+
+    report_payload = {
+        "timestamp": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "dataset": dataset,
+        "profile": profile,
+        "commit_hash": commit_hash,
+        "hardware": {
+            "device": "MacBook Pro",
+            "chip": "Apple M2 Pro",
+            "cores": 10,
+        },
+        "models": models,
+    }
+    with open(latest_report_path, "w", encoding="utf-8") as latest_report_file:
+        json.dump(report_payload, latest_report_file, indent=2)
+
+    return latest_report_path
+
 
 def main() -> None:
     configure_logging_from_env()
@@ -104,49 +159,55 @@ def main() -> None:
     print(f"Label distribution saved to: {_dist_path}")
 
     settings_results = [
-        {"metrics": {}, "detection_func": spacy_detection, "spacy_model_name": "en_core_web_lg"},
         {"metrics": {}, "detection_func": presidio_detection, "spacy_model_name": "en_core_web_lg"},
+        {"metrics": {}, "detection_func": taivium_detection, "spacy_model_name": "en_core_web_sm"},
         {"metrics": {}, "detection_func": taivium_detection, "spacy_model_name": "en_core_web_lg"},
     ]
 
     # Determine which detections to run
     detections_to_run = settings_results
     if args.skip_baselines:
-        print("\n[--skip-baselines] Loading cached spaCy and Presidio results...")
+        print("\n[--skip-baselines] Loading cached Presidio and Taivium(sm) results...")
         cache_dir = Path(__file__).parent / ".cache"
-        
-        # Try to load cached metrics for spaCy and Presidio
-        for i, detection_name in enumerate(["spacy_detection", "presidio_detection"]):
-            # Look for *_report.json files in cache directory
-            pattern = f"*{detection_name}*_report.json"
+
+        # Load cached metrics for the first two configured models.
+        baseline_targets = [
+            (0, "presidio_detection", "en_core_web_lg"),
+            (1, "taivium_detection", "en_core_web_sm"),
+        ]
+        for i, detection_name, model_name in baseline_targets:
+            pattern = f"*{detection_name}*{model_name.replace('/', '_')}*_{detection_name}_report.json"
             matches = list(cache_dir.glob(pattern))
+            if not matches:
+                # Fallback if model-specific naming differs.
+                matches = list(cache_dir.glob(f"*{detection_name}*_report.json"))
             if matches:
                 # Sort by modification time and use newest
                 matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
                 report_file = matches[0]
                 try:
-                    with open(report_file, 'r') as f:
+                    with open(report_file, "r", encoding="utf-8") as f:
                         report = json.load(f)
                     metrics = report.get("metrics", {})
                     settings_results[i]["metrics"] = metrics
                     settings_results[i]["cache_file"] = report_file
                     settings_results[i]["total_time"] = 0  # Cached, no actual runtime
                     settings_results[i]["n_samples"] = 0
-                    precision = metrics.get('precision', 'N/A')
-                    recall = metrics.get('recall', 'N/A')
+                    precision = metrics.get("precision", "N/A")
+                    recall = metrics.get("recall", "N/A")
                     if isinstance(precision, (int, float)):
                         precision = f"{precision:.3f}"
                     if isinstance(recall, (int, float)):
                         recall = f"{recall:.3f}"
                     print(f"  ✓ Loaded cached {detection_name}: P={precision}, R={recall}")
-                except Exception as e:
+                except (OSError, json.JSONDecodeError) as e:
                     print(f"  ⚠ Could not load cached results for {detection_name}: {e}")
             else:
                 print(f"  ⚠ No cached results found for {detection_name}")
-        
+
         # Only run Taivium detection
         detections_to_run = [settings_results[2]]
-        print(f"  Running only: taivium_detection\n")
+        print("  Running only: taivium_detection\n")
     
     for _, detection_settings_result in tqdm.tqdm(
         enumerate(detections_to_run), total=len(detections_to_run)
@@ -192,6 +253,15 @@ def main() -> None:
     # Print timing summary
     print_timing_summary(settings_results)
 
+    latest_report_path = _save_latest_report_json(
+        Path(PROJECT_ROOT),
+        args.dataset,
+        args.profile,
+        shared_cache_payload["commit_hash"],
+        settings_results,
+    )
+    print(f"Latest report saved: {latest_report_path}")
+
     if args.no_trend:
         print("Performance trend recording disabled via --no-trend")
     else:
@@ -205,6 +275,7 @@ def main() -> None:
         trend_plot_path = get_performance_trend_plot_path(__file__, args.dataset, args.profile)
         if save_performance_trend_plot(history, trend_plot_path):
             print(f"Performance trend plot saved to: {trend_plot_path}")
+
 
     # Save delta matrices to JSON and text formats
     if settings_results:

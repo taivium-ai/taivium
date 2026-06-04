@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Taivium Performance Report</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --card: #ffffff;
+      --ink: #0f1d2e;
+      --muted: #52627a;
+      --line: #d8e1ee;
+      --good: #e7f8ec;
+      --bad: #ffe9ec;
+      --neutral: #f2f5fa;
+      --brand: #0b5fb0;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Segoe UI", "SF Pro Text", sans-serif; background: linear-gradient(180deg, #edf4ff 0%, var(--bg) 240px); color: var(--ink); }
+    .shell { max-width: 1280px; margin: 0 auto; padding: 24px; }
+    .hero { background: radial-gradient(circle at top right, #cde6ff, #ffffff 65%); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; }
+    h1 { margin: 0 0 6px; font-size: 28px; letter-spacing: 0.2px; }
+    .meta { color: var(--muted); margin: 0; }
+    .panel { margin-top: 18px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+    h2, h3 { margin: 0 0 10px; }
+    .trend-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 14px; align-items: start; }
+    .table-wrap { overflow: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 920px; }
+    table.trend-mini { min-width: 560px; }
+    table.trend-mini th, table.trend-mini td { font-size: 12px; padding: 6px 8px; }
+    @media (max-width: 980px) { .trend-grid { grid-template-columns: 1fr; } }
+    th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: right; font-variant-numeric: tabular-nums; }
+    th:first-child, td:first-child { text-align: left; }
+    thead th { background: #f0f5fc; position: sticky; top: 0; z-index: 1; }
+    td.good { background: var(--good); }
+    td.bad { background: var(--bad); }
+    td.neutral { background: var(--neutral); color: #5d6b80; }
+    .legend { display: flex; gap: 14px; color: var(--muted); font-size: 13px; }
+    .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; border: 1px solid #c7d3e4; vertical-align: -1px; }
+    .legend .g::before { background: var(--good); }
+    .legend .b::before { background: var(--bad); }
+    .legend .n::before { background: var(--neutral); }
+    a { color: var(--brand); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <h1>Taivium Latest Performance Report</h1>
+      <p class="meta">Generated: 2026-06-04 09:23:21 UTC | Dataset: ai4privacy/pii-masking-300k | Profile: privacy</p>      <p class="meta">Hardware: MacBook Pro · Apple M2 Pro · 10-core</p>      <p class="meta">Source delta file: 6124f29411aaa69352dd3156993ffc21__presidio_detection__en_core_web_lg_delta_matrices.json</p>
+    </section>
+
+    <section class="panel">
+      <h2>Latest Summary</h2>
+      <div class="table-wrap"><table>
+        <thead>
+          <tr>
+                        <th>Detector</th><th>Model</th><th>Precision</th><th>Recall</th><th>F1</th><th>F1 Δ</th><th>Timing (ms/sample)</th><th>Timing Δ (ms)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>presidio_detection</td><td>en_core_web_lg</td><td>0.264414</td><td>0.233456</td><td>0.247972</td><td class="neutral">-</td><td>2.706</td><td class="neutral">-</td></tr><tr><td>taivium_detection</td><td>en_core_web_sm</td><td>0.295842</td><td>0.276528</td><td>0.285859</td><td class="neutral">-</td><td>2.274</td><td class="neutral">-</td></tr><tr><td>taivium_detection</td><td>en_core_web_lg</td><td>0.301186</td><td>0.300116</td><td>0.300650</td><td class="neutral">-</td><td>2.597</td><td class="neutral">-</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+        <section class="panel"><h2>Performance Trend</h2><p class="meta">Historical trend for F1 and timing across runs.</p><div class="trend-grid"><img src="assets/ai4privacy_pii-masking-300k_privacy_performance_trend.png" alt="Performance trend chart" style="width:100%;border:1px solid var(--line);border-radius:10px;" /><div><h3>Last 5 Runs (F1)</h3><div class="table-wrap"><table class="trend-mini"><thead><tr><th>Run</th><th>presidio_detection (en_core_web_lg)</th><th>taivium_detection (en_core_web_sm)</th><th>taivium_detection (en_core_web_lg)</th></tr></thead><tbody><tr><th>2026-06-04 09:23:20 UTC</th><td>0.2480</td><td>0.2859</td><td>0.3006</td></tr></tbody></table></div></div></div></section>
+    <section class="panel"><h2>Dataset Distribution</h2><p class="meta">Label distribution for ai4privacy/pii-masking-300k (privacy profile)</p><div style="text-align:center;"><img src="assets/ai4privacy_pii-masking-300k_privacy_label_distribution.png" alt="Label distribution chart" style="max-width:100%;height:auto;border:1px solid var(--line);border-radius:10px;" /></div></section>
+    <section class="panel">
+      <h2>Comparison Matrices</h2>
+      <p class="meta">Cell value is Δ(column - row). For timing, negative values are better (faster).</p>
+      <div class="legend"><span class="g">better</span><span class="b">worse</span><span class="n">same</span></div>
+    </section>
+    <section class="panel"><h3>PRECISION Delta Matrix</h3><div class="table-wrap"><table><thead><tr><th>Baseline \ Compare</th><th>presidio_detection (en_core_web_lg)</th><th>taivium_detection (en_core_web_sm)</th><th>taivium_detection (en_core_web_lg)</th></tr></thead><tbody><tr><th>presidio_detection (en_core_web_lg)</th><td class="neutral">+0.0000</td><td class="good">+0.0314</td><td class="good">+0.0368</td></tr><tr><th>taivium_detection (en_core_web_sm)</th><td class="bad">-0.0314</td><td class="neutral">+0.0000</td><td class="good">+0.0053</td></tr><tr><th>taivium_detection (en_core_web_lg)</th><td class="bad">-0.0368</td><td class="bad">-0.0053</td><td class="neutral">+0.0000</td></tr></tbody></table></div></section><section class="panel"><h3>RECALL Delta Matrix</h3><div class="table-wrap"><table><thead><tr><th>Baseline \ Compare</th><th>presidio_detection (en_core_web_lg)</th><th>taivium_detection (en_core_web_sm)</th><th>taivium_detection (en_core_web_lg)</th></tr></thead><tbody><tr><th>presidio_detection (en_core_web_lg)</th><td class="neutral">+0.0000</td><td class="good">+0.0431</td><td class="good">+0.0667</td></tr><tr><th>taivium_detection (en_core_web_sm)</th><td class="bad">-0.0431</td><td class="neutral">+0.0000</td><td class="good">+0.0236</td></tr><tr><th>taivium_detection (en_core_web_lg)</th><td class="bad">-0.0667</td><td class="bad">-0.0236</td><td class="neutral">+0.0000</td></tr></tbody></table></div></section><section class="panel"><h3>F1 Delta Matrix</h3><div class="table-wrap"><table><thead><tr><th>Baseline \ Compare</th><th>presidio_detection (en_core_web_lg)</th><th>taivium_detection (en_core_web_sm)</th><th>taivium_detection (en_core_web_lg)</th></tr></thead><tbody><tr><th>presidio_detection (en_core_web_lg)</th><td class="neutral">+0.0000</td><td class="good">+0.0379</td><td class="good">+0.0527</td></tr><tr><th>taivium_detection (en_core_web_sm)</th><td class="bad">-0.0379</td><td class="neutral">+0.0000</td><td class="good">+0.0148</td></tr><tr><th>taivium_detection (en_core_web_lg)</th><td class="bad">-0.0527</td><td class="bad">-0.0148</td><td class="neutral">+0.0000</td></tr></tbody></table></div></section>
+
+    <section class="panel">
+      <h2>Latency Comparison</h2>
+      <p class="meta">Pairwise latency comparison (ms/sample). Derived from this run's timing data.</p>
+      <div class="legend"><span class="g">faster</span><span class="b">slower</span><span class="n">same</span></div>
+    </section>
+    <section class="panel"><h3>TIMING Latency Delta Matrix</h3><p class="meta">Cell value is Δ ms/sample (column − row) and relative % change. Negative (green) means column model is faster than row model.</p><div class="table-wrap"><table><thead><tr><th>Baseline \ Compare</th><th>presidio_detection (en_core_web_lg)</th><th>taivium_detection (en_core_web_sm)</th><th>taivium_detection (en_core_web_lg)</th></tr></thead><tbody><tr><th>presidio_detection (en_core_web_lg)</th><td class="neutral">+0.0000</td><td class="good">-0.4324 (-16.0%)</td><td class="good">-0.1088 (-4.0%)</td></tr><tr><th>taivium_detection (en_core_web_sm)</th><td class="bad">+0.4324 (+19.0%)</td><td class="neutral">+0.0000</td><td class="bad">+0.3236 (+14.2%)</td></tr><tr><th>taivium_detection (en_core_web_lg)</th><td class="bad">+0.1088 (+4.2%)</td><td class="good">-0.3236 (-12.5%)</td><td class="neutral">+0.0000</td></tr></tbody></table></div></section>
+
+    <section class="panel">
+      <h2>Methodology</h2>
+      <h3>Dataset Label Schema</h3>
+      <p class="meta">The Privacy profile includes the following entity labels:</p>
+      <ul style="font-size: 13px; line-height: 1.6; color: var(--muted);">
+        <li><strong>PERSON:</strong> Individual names and personal identifiers</li>
+        <li><strong>ORG:</strong> Organization and company names</li>
+        <li><strong>LOCATION:</strong> Geographic locations (cities, countries, regions)</li>
+        <li><strong>EMAIL:</strong> Email addresses</li>
+        <li><strong>PHONE:</strong> Telephone numbers</li>
+        <li><strong>API_KEY:</strong> API keys and authentication tokens</li>
+        <li><strong>DATE:</strong> Dates and temporal expressions</li>
+        <li><strong>IP:</strong> IP addresses (IPv4 and IPv6)</li>
+        <li><strong>SOCIALNUMBER:</strong> Social security numbers, credit card numbers, cryptocurrency addresses</li>
+        <li><strong>USERNAME:</strong> Usernames and login identifiers</li>
+      </ul>
+      <h3>Detector Output Mapping</h3>
+      <p class="meta"><strong>Taivium:</strong> Uses native entity labels matching the schema directly.</p>
+      <p class="meta"><strong>Presidio:</strong> Maps its entity types to the label schema as follows:</p>
+      <div class="table-wrap"><table style="font-size: 12px;">
+        <thead><tr style="background: #f0f5fc;"><th style="text-align: left;">Presidio Entity Type</th><th style="text-align: left;">Mapped Label</th></tr></thead>
+        <tbody>
+          <tr><td>PERSON</td><td>PERSON</td></tr>
+          <tr><td>ORGANIZATION</td><td>ORG</td></tr>
+          <tr><td>LOCATION</td><td>LOCATION</td></tr>
+          <tr><td>EMAIL_ADDRESS</td><td>EMAIL</td></tr>
+          <tr><td>PHONE_NUMBER</td><td>PHONE</td></tr>
+          <tr><td>DATE_TIME</td><td>DATE</td></tr>
+          <tr><td>IP_ADDRESS</td><td>IP</td></tr>
+          <tr><td>US_SSN, CREDIT_CARD, CRYPTO</td><td>SOCIALNUMBER</td></tr>
+          <tr><td>USERNAME</td><td>USERNAME</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+  </div>
+</body>
+</html>
