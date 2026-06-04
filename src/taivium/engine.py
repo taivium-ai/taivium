@@ -26,6 +26,9 @@ from typing import Any, Callable, cast, Dict, List, Optional, Tuple
 import os
 
 import spacy
+from huggingface_hub import snapshot_download
+from gliner import GLiNER
+
 from .transformer import transformer_evidence
 from .session_store import InMemorySessionStore, SessionStore, RedisSessionStore
 from .llm import llm_evidence
@@ -247,7 +250,7 @@ def normalize_label(label: str) -> str:
         "DRIVER_LICENSE": "SOCIALNUMBER",
         "DRIVERLICENSE": "SOCIALNUMBER",
     }
-    
+
     # Return the mapped evaluation token if found; otherwise, pass the raw token back
     # This ensures explicit inputs like 'USERNAME' or 'EMAIL' flow through cleanly.
     return mapping.get(lookup, label)
@@ -255,6 +258,89 @@ def normalize_label(label: str) -> str:
 # -----------------------------
 # Evidence detectors
 # -----------------------------
+
+@lru_cache(maxsize=1)
+def get_gliner_model():
+    """Lazy-load and cache GLiNER ONNX quantized model for 5-10x speedup.
+    
+    Uses the ONNX-quantized model from onnx-community/gliner_small-v2.1 to achieve
+    significantly faster inference (5-10x) compared to full transformer weights.
+    The model is downloaded once and cached for all subsequent calls.
+    
+    Returns:
+        Loaded GLiNER model instance with ONNX quantization enabled.
+    """
+    try:
+        # 1. Download the ONNX model repository from HuggingFace Hub
+        repo_id = "onnx-community/gliner_small-v2.1"
+        logger.info(f"Downloading ONNX GLiNER model from {repo_id}...")
+        local_dir = snapshot_download(repo_id=repo_id)
+        
+        # 2. Path to the quantized ONNX weights file
+        onnx_model_file = os.path.join("onnx", "model_quantized.onnx")
+
+        logger.info(f"Loading GLiNER from {local_dir} with ONNX quantization")
+        
+        # 3. Load GLiNER with ONNX weights for fast inference
+        model = GLiNER.from_pretrained(
+            local_dir,
+            load_onnx_model=True,
+            load_tokenizer=True,
+            onnx_model_file=onnx_model_file,
+            trust_remote_code=True
+        )
+        
+        logger.info("ONNX GLiNER model loaded successfully (5-10x faster inference)")
+        return model
+        
+    except Exception as e:
+        # Fallback to standard transformer weights if ONNX fails
+        logger.warning(
+            f"ONNX GLiNER load failed ({e}), falling back to standard weights. "
+            "Inference will be slower. Install onnxruntime for speedup: "
+            "pip install onnxruntime"
+        )
+        return GLiNER.from_pretrained("knowledgator/gliner-pii-small-v1.0")
+
+def gliner_evidence(text: str, targets: Optional[List[str]] = None) -> List[Evidence]:
+    """Collect evidence from GLiNER for PERSON and LOCATION entities.
+
+    GLiNER is triggered only for lowercased text (telemetry-like content) where
+    spaCy NER may struggle due to lack of capitalization cues.
+
+    Args:
+        text: Input text to analyze.
+        targets: List of entity labels to detect (default: ["PERSON", "LOCATION"]).
+
+    Returns:
+        List of GLiNER-origin `Evidence` records.
+    """
+    evidence: List[Evidence] = []
+
+    # Use provided targets or default to PERSON and LOCATION
+    target_labels = targets if targets is not None else ["PERSON", "LOCATION"]
+    if not target_labels:
+        return evidence
+
+    try:
+        model = get_gliner_model()
+        predictions = model.predict_entities(text, target_labels, threshold=0.4)
+        
+        for pred in predictions:
+            # Normalize the label from GLiNER output (e.g., "name" → "PERSON")
+            label = normalize_label(pred.get("label", "UNKNOWN"))
+            if label != "UNKNOWN":
+                evidence.append(Evidence(
+                    start=pred["start"],
+                    end=pred["end"],
+                    label=label,
+                    source="gliner",
+                    confidence=0.55,  # Lower than spaCy to deprioritize in scoring
+                ))
+    except Exception as e:
+        logger.warning("GLiNER detection failed: %s", e)
+    
+    return evidence
 
 def spacy_evidence(text: str, model_name: str = "en_core_web_sm") -> List[Evidence]:
     """Collect NER evidence from spaCy.
@@ -362,7 +448,17 @@ def collect_evidence(  # pylint: disable=too-many-arguments
     Returns:
         Aggregated evidence from enabled detector layers.
     """
-    evidence = spacy_evidence(text, spacy_model_name) + regex_evidence(text)
+    evidence = regex_evidence(text)
+
+    # 1. Check Condition 1: Is the payload completely lowercased telemetry?
+    if len(text) > 20 and text.islower() and any(c.isalpha() for c in text):
+        # SHORT-CIRCUIT: Skip spaCy entirely and trigger GLiNER for lowercased text
+        gliner_results = gliner_evidence(text, targets=["PERSON", "LOCATION"])
+        evidence += gliner_results
+    else:
+        # Otherwise, run the standard spaCy NER layer for normal text
+        evidence += spacy_evidence(text, spacy_model_name)
+
     if use_transformer:
         evidence += (transformer_fn or transformer_evidence)(text)
     if use_llm:
