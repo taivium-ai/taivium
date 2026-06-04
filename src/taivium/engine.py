@@ -149,7 +149,13 @@ class Entity:
 # Regex detectors (PII / secrets)
 # -----------------------------
 EMAIL_REGEX = re.compile(r"[a-zA-Z0-9_.+\-\xC0-\xFF]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
-PHONE_REGEX = re.compile(r"\+?\d[\d\s\-\.]{7,}\d")
+PHONE_REGEX = re.compile(
+    r"(?<!\d)"
+    r"(?!\d{4}[-/]\d{2}[-/]\d{2})"         # Exclude YYYY-MM-DD / YYYY/MM/DD dates
+    r"(?!\d{1,3}\.\d{1,3}\.\d{1,3})"          # Exclude IP-like patterns (3 octet groups)
+    r"\+?\d[\d \-\.\(\)]{7,}\d"              # Digits, spaces, dashes, dots, parens only
+    r"(?!\d)"
+)
 API_KEY_REGEX = re.compile(
     r"(sk-[a-zA-Z0-9]{10,}|api[_-]?key\s*[:=]\s*[a-zA-Z0-9]+)", re.I)
 
@@ -176,7 +182,8 @@ DATE_REGEX = re.compile(
     r"|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
     r"(?:[,\s]+\d{4})?"
     # Times with optional seconds and optional AM/PM: 3:07am, 10:15 PM, 22:41
-    r"|(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s*[ap]m)?"
+    # (?<!T) prevents matching times inside ISO 8601 timestamps (e.g. T00:00:00)
+    r"|(?<!T)(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s*[ap]m)?"
     # Hour-only with AM/PM: "1 AM", "8 PM", "3am"
     r"|\d{1,2}\s*[ap]m"
     # o'clock: "5 o'clock", "13 o'clock"
@@ -217,17 +224,12 @@ SOCIALNUMBER_REGEX = re.compile(
     re.IGNORECASE
 )
 
-# Usernames: handles a wide variety of formats from the dataset
-# - Pure alphanumeric: 'paaltwvkjuijwbj957', 'wsfdkmi9214'
-# - With separators: 'maria-rosaria.amardi1962', 'yeganeh-afchar'
-# - Starting with digits: '2005zheng.monckton', '1992marilynn.vallbona'
-# - Short codes: 'G46', 'T98', '43CU', 'BG', 'PT'
-# - Non-ASCII: 'üzmez', 'trí.löwe18'
-# Pattern: 2+ chars, alphanumeric (including Unicode) plus . - _ (exclude pure digits)
+# Usernames: conservative pattern requiring explicit separators with content
+# - Format: [alphanumeric]+separator+[alphanumeric]+ (at least 3 chars each side preferred)
+# - Examples: 'alice_smith', 'john.doe', 'maria-rosaria'
+# Pattern: requires at least one letter/digit, separator, and at least 2 more chars
 USERNAME_REGEX = re.compile(
-    r"\b(?![\d._-]+\b)"  # Negative lookahead: exclude pure digits/separators
-    r"[a-zA-Z0-9._\-\xC0-\xFF]{2,}"  # 2+ chars of alphanumeric, dot, hyphen, underscore, + non-ASCII
-    r"\b"
+    r"\b[a-zA-Z0-9\xC0-\xFF]+[._-][a-zA-Z0-9._\-\xC0-\xFF]{2,}\b"
 )
 
 # -----------------------------
@@ -323,15 +325,15 @@ def get_gliner_model():
 def gliner_evidence(text: str, targets: Optional[List[str]] = None) -> List[Evidence]:
     """Collect evidence from GLiNER for PERSON and LOCATION entities.
 
-    GLiNER is triggered only for lowercased text (telemetry-like content) where
-    spaCy NER may struggle due to lack of capitalization cues.
+    GLiNER is optimized for high-precision detection: uses 0.55 threshold to filter
+    out uncertain predictions, prioritizing correct detections over recall.
 
     Args:
         text: Input text to analyze.
         targets: List of entity labels to detect (default: ["PERSON", "LOCATION"]).
 
     Returns:
-        List of GLiNER-origin `Evidence` records.
+        List of GLiNER-origin `Evidence` records with high-confidence threshold.
     """
     evidence: List[Evidence] = []
 
@@ -342,23 +344,31 @@ def gliner_evidence(text: str, targets: Optional[List[str]] = None) -> List[Evid
 
     try:
         model = get_gliner_model()
-        predictions = model.predict_entities(text, target_labels, threshold=0.4)
+        predictions = model.predict_entities(text, target_labels, threshold=0.55)
         
         for pred in predictions:
             # Normalize the label from GLiNER output (e.g., "name" → "PERSON")
             label = normalize_label(pred.get("label", "UNKNOWN"))
             if label != "UNKNOWN":
+                # Use GLiNER's confidence score directly for precision-focused filtering
+                gliner_confidence = pred.get("score", 0.55)
                 evidence.append(Evidence(
                     start=pred["start"],
                     end=pred["end"],
                     label=label,
                     source="gliner",
-                    confidence=0.55,  # Lower than spaCy to deprioritize in scoring
+                    confidence=gliner_confidence,  # High-confidence GLiNER scores
                 ))
     except Exception as e:
         logger.warning("GLiNER detection failed: %s", e)
     
     return evidence
+
+# Labels spaCy NER is trusted to emit.
+# Restricting to named-entity labels prevents noisy spaCy labels (DATE, CARDINAL,
+# TIME, MONEY, etc.) from generating false positives.
+# ORG is kept because the library contract requires it (policy engine tests expect ORG).
+_SPACY_NER_LABELS = {"PERSON", "LOCATION", "ORG"}
 
 def spacy_evidence(text: str, model_name: str = "en_core_web_sm") -> List[Evidence]:
     """Collect NER evidence from spaCy.
@@ -369,7 +379,8 @@ def spacy_evidence(text: str, model_name: str = "en_core_web_sm") -> List[Eviden
             (default: ``en_core_web_sm``).
 
     Returns:
-        List of spaCy-origin ``Evidence`` records.
+        List of spaCy-origin ``Evidence`` records, restricted to
+        ``_SPACY_NER_LABELS`` (PERSON, LOCATION) to minimize false positives.
     """
     nlp = get_spacy_model(model_name)
     doc = nlp(text)
@@ -377,6 +388,8 @@ def spacy_evidence(text: str, model_name: str = "en_core_web_sm") -> List[Eviden
 
     for ent in doc.ents:
         label = normalize_label(ent.label_)
+        if label not in _SPACY_NER_LABELS:
+            continue
         evidence.append(Evidence(
             start=ent.start_char,
             end=ent.end_char,
@@ -392,6 +405,9 @@ def regex_evidence(text: str) -> List[Evidence]:
     Collects high-confidence evidence from regex-based PII/secret patterns.
 
     Covered patterns: EMAIL, PHONE, API_KEY, IP, DATE, SOCIALNUMBER.
+    
+    Note: USERNAME is excluded from regex detection due to high false positive risk.
+    USERNAME detection relies instead on recurrence patterns (detected when appearing 2+ times).
     """
     evidence: List[Evidence] = []
 
@@ -420,11 +436,12 @@ def regex_evidence(text: str) -> List[Evidence]:
 # Evidence merge and canonicalization
 # -----------------------------
 SOURCE_WEIGHT: Dict[str, float] = {
-    "spacy": 0.7,
-    "regex": 1.0,
+    "gliner": 1.0,      # Highest weight: GLiNER is most precise for named entities
+    "regex": 1.0,       # Regex patterns also very reliable
+    "spacy": 0.5,       # Lower weight: spaCy has lower precision on PERSON/LOCATION
     "transformer": 0.8,
     "llm": 0.6,
-    "recurrence": 0.5,  # Lower than detectors — fills gaps, doesn't override
+    "recurrence": 0.4,  # Very conservative: only accepts high-confidence recurrence
 }
 
 # Labels safe for strict lexical recurrence by default.
@@ -432,6 +449,7 @@ RECURRENCE_ALLOWED = {
     "EMAIL",
     "PHONE",
     "API_KEY",
+    "USERNAME",
 }
 
 
@@ -468,14 +486,9 @@ def collect_evidence(  # pylint: disable=too-many-arguments
     """
     evidence = regex_evidence(text)
 
-    # 1. Check Condition 1: Is the payload completely lowercased telemetry?
-    if len(text) > 20 and text.islower() and any(c.isalpha() for c in text):
-        # SHORT-CIRCUIT: Skip spaCy entirely and trigger GLiNER for lowercased text
-        gliner_results = gliner_evidence(text, targets=["PERSON", "LOCATION"])
-        evidence += gliner_results
-    else:
-        # Otherwise, run the standard spaCy NER layer for normal text
-        evidence += spacy_evidence(text, spacy_model_name)
+    # 1. Use GLiNER as the default NER layer (higher precision than spaCy)
+    gliner_results = gliner_evidence(text, targets=["PERSON", "LOCATION"])
+    evidence += gliner_results
 
     if use_transformer:
         evidence += (transformer_fn or transformer_evidence)(text)
