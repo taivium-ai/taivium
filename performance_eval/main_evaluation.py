@@ -1,6 +1,7 @@
 '''Main evaluation script for running entity detection evaluations on specified datasets and label profiles.
 This script loads the specified dataset and label profile, runs evaluations using both spaCy and Taivium, and saves the results and error samples. It also computes and prints delta matrices comparing the models'''
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -71,6 +72,12 @@ def main() -> None:
         action="store_true",
         help="Disable performance history updates and trend chart generation.",
     )
+    parser.add_argument(
+        "--skip-baselines",
+        action="store_true",
+        default=True,
+        help="Skip spaCy and Presidio evaluation; reuse cached results from previous run.",
+    )
 
     args, _ = parser.parse_known_args()
 
@@ -102,8 +109,37 @@ def main() -> None:
         {"metrics": {}, "detection_func": taivium_detection, "spacy_model_name": "en_core_web_lg"},
     ]
 
+    # Determine which detections to run
+    detections_to_run = settings_results
+    if args.skip_baselines:
+        print("\n[--skip-baselines] Loading cached spaCy and Presidio results...")
+        cache_dir = Path(__file__).parent / ".cache"
+        
+        # Try to load cached metrics for spaCy and Presidio
+        for i, detection_name in enumerate(["spacy_detection", "presidio_detection"]):
+            # Look for JSON files with metrics in cache directory
+            pattern = f"{detection_name}*metrics*.json"
+            matches = list(cache_dir.glob(pattern))
+            if matches:
+                # Sort by modification time and use newest
+                matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+                metrics_file = matches[0]
+                try:
+                    with open(metrics_file, 'r') as f:
+                        metrics = json.load(f)
+                    settings_results[i]["metrics"] = metrics
+                    settings_results[i]["cache_file"] = str(metrics_file)
+                    settings_results[i]["total_time"] = 0  # Cached, no actual runtime
+                    print(f"  ✓ Loaded cached {detection_name}: P={metrics.get('precision', 'N/A'):.3f}, R={metrics.get('recall', 'N/A'):.3f}")
+                except Exception as e:
+                    print(f"  ⚠ Could not load cached results for {detection_name}: {e}")
+        
+        # Only run Taivium detection
+        detections_to_run = [settings_results[2]]
+        print(f"  Running only: taivium_detection\n")
+    
     for _, detection_settings_result in tqdm.tqdm(
-        enumerate(settings_results), total=len(settings_results)
+        enumerate(detections_to_run), total=len(detections_to_run)
     ):
         detection = detection_settings_result["detection_func"]
         model_name = detection_settings_result["spacy_model_name"]
