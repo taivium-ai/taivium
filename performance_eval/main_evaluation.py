@@ -75,7 +75,7 @@ def main() -> None:
     parser.add_argument(
         "--skip-baselines",
         action="store_true",
-        default=True,
+        default=False,
         help="Skip spaCy and Presidio evaluation; reuse cached results from previous run.",
     )
 
