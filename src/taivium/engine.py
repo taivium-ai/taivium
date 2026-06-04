@@ -149,50 +149,67 @@ EMAIL_REGEX = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
 PHONE_REGEX = re.compile(r"\+?\d[\d\s\-]{7,}\d")
 API_KEY_REGEX = re.compile(
     r"(sk-[a-zA-Z0-9]{10,}|api[_-]?key\s*[:=]\s*[a-zA-Z0-9]+)", re.I)
+
+# IPv4 only (conservative)
 IP_REGEX = re.compile(
     r"\b(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
     r"(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\b"
 )
+
+# Date formats: YYYY-MM-DD, MM/DD/YYYY (conservative)
 DATE_REGEX = re.compile(
     r"\b(?:"
     r"\d{4}[-/]\d{1,2}[-/]\d{1,2}"
     r"|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}"
     r")\b"
 )
+
+# US SSN only (123-45-6789 format)
 SOCIALNUMBER_REGEX = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
 
 
+# -----------------------------
 # -----------------------------
 # Label normalization
 # -----------------------------
 def normalize_label(label: str) -> str:
     """Normalizes internal NLP/Regex entity labels to match the 
-    canonical evaluation schema taxonomy exactly.
+    canonical evaluation targets output by eval_datasets.py.
     """
     if not label:
         return "UNKNOWN"
 
-    # Standardize incoming labels to prevent case mismatches
+    # Force uppercase to eliminate string-casing mismatches
     lookup = label.strip().upper()
 
     mapping = {
-        # 1. Map spaCy base elements directly to explicit schema requirements
-        "GPE": "LOCATION",       # Geopolitical entities are almost always Countries/States
-        "LOC": "LOCATION",      # General fallback
+        # --- SpaCy Base NER Mappings ---
+        "GPE": "LOCATION",         # SpaCy Geopolitical Entities -> LOCATION
+        "LOC": "LOCATION",         # SpaCy Locations -> LOCATION
+        "PERSON": "PERSON",
+        "ORG": "ORG",
+
+        # --- Your Internal Regex Engine Mappings ---
+        "EMAIL_ADDRESS": "EMAIL",  # Ensures internal variations map to 'EMAIL'
+        "PHONE_NUMBER": "PHONE",   # Maps to evaluation canonical 'PHONE'
+        "TEL": "PHONE",            # Backwards compatibility if engine catches TEL
         
-        # 2. Correct internal Regex outputs to match the evaluation schema keys
-        "PHONE": "PHONE",           # Already in canonical form.
-        "PHONE_NUMBER": "PHONE",
-        "EMAIL_ADDRESS": "EMAIL",
+        # --- Expanding Regex Infrastructure (Unlocks the fallback metrics) ---
+        "IP_ADDRESS": "IP",        # Maps your internal regex label -> canonical 'IP'
+        "DATE_TIME": "DATE",       # Maps your internal dates/times -> canonical 'DATE'
+        "TIME": "DATE",            # Matches eval_datasets.py conversion: TIME -> DATE
+        "BOD": "DATE",             # Matches eval_datasets.py conversion: BOD -> DATE
         
-        # 3. Align technical/infrastructure keys out to evaluation targets
-        "IP_ADDRESS": "IP",      # Maps your internal regex engine key -> evaluation 'IP'
-        "DATE_TIME": "DATE",     # Maps internal dates -> evaluation 'DATE'
-        "US_SSN": "SOCIALNUMBER", # Maps internal SSN -> evaluation 'SOCIALNUMBER'
+        # --- Document Identifier Grouping ---
+        "US_SSN": "SOCIALNUMBER",  # Maps internal SSN -> canonical 'SOCIALNUMBER'
+        "PASSPORT": "SOCIALNUMBER",
+        "IDCARD": "SOCIALNUMBER",
+        "DRIVER_LICENSE": "SOCIALNUMBER",
+        "DRIVERLICENSE": "SOCIALNUMBER",
     }
     
-    # Return the mapped evaluation token if found; otherwise keep the original string
-    # This automatically preserves explicit tags like 'BUILDING', 'CITY', 'ZIPCODE', etc.
+    # Return the mapped evaluation token if found; otherwise, pass the raw token back
+    # This ensures explicit inputs like 'USERNAME' or 'EMAIL' flow through cleanly.
     return mapping.get(lookup, label)
 
 # -----------------------------

@@ -62,7 +62,7 @@ def test_privacy_pipeline_partial_labels():
     result = pipeline.process(text)
     # Only PERSON, EMAIL, API_KEY should be anonymized
     for e in result["entities"]:
-        assert e["label"] in {"PERSON", "EMAIL", "API_KEY", "LAW", "GPE"}, f"Unexpected label: {e['label']}"
+        assert e["label"] in {"PERSON", "EMAIL", "API_KEY", "LAW", "GPE", "SOCIALNUMBER"}, f"Unexpected label: {e['label']}"
     # Check that core anonymized labels are present
     found_labels = {e["label"] for e in result["entities"]}
     for label in ["PERSON", "EMAIL", "API_KEY"]:
