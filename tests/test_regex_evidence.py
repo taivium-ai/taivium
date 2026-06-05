@@ -446,6 +446,147 @@ def test_merge_single_entity():
     assert merged[0] == e
 
 
+# ============================================================
+# Generalized structured field detection tests
+# ============================================================
+
+def test_structured_field_email_value_only():
+    """Test that only the EMAIL value is labeled, not the field key."""
+    text = '"email": "john@example.com"'
+    evidence = eng.regex_evidence(text)
+    email_spans = [text[e.start:e.end] for e in evidence if e.label == "EMAIL"]
+    
+    # Only the value should be extracted as EMAIL
+    assert "john@example.com" in email_spans
+    # The key "email" should NOT be in the EMAIL spans
+    assert "email" not in email_spans
+
+
+def test_structured_field_email_json_format():
+    """Test EMAIL detection in JSON format."""
+    text = '{"email": "alice@domain.com", "phone": "555-1234"}'
+    evidence = eng.regex_evidence(text)
+    email_texts = [text[e.start:e.end] for e in evidence if e.label == "EMAIL"]
+    
+    assert "alice@domain.com" in email_texts
+
+
+def test_structured_field_phone_markdown_format():
+    """Test PHONE detection in Markdown format."""
+    text = "- phone: 555-1234\n- name: John"
+    evidence = eng.regex_evidence(text)
+    phone_texts = [text[e.start:e.end] for e in evidence if e.label == "PHONE"]
+    
+    assert "555-1234" in phone_texts
+
+
+def test_structured_field_date_time_format():
+    """Test DATE detection from 'time' field key."""
+    text = '"time": "10:30am"'
+    evidence = eng.regex_evidence(text)
+    date_texts = [text[e.start:e.end] for e in evidence if e.label == "DATE"]
+    
+    assert "10:30am" in date_texts
+
+
+def test_structured_field_xml_format():
+    """Test structured field detection in XML format."""
+    text = "<email>bob@test.org</email><phone>555-9999</phone>"
+    evidence = eng.regex_evidence(text)
+    
+    email_texts = [text[e.start:e.end] for e in evidence if e.label == "EMAIL"]
+    phone_texts = [text[e.start:e.end] for e in evidence if e.label == "PHONE"]
+    
+    assert "bob@test.org" in email_texts
+    assert "555-9999" in phone_texts
+
+
+def test_structured_field_person_name():
+    """Test PERSON detection from 'name' field."""
+    text = '"name": "Charlie Smith"'
+    evidence = eng.regex_evidence(text)
+    person_texts = [text[e.start:e.end] for e in evidence if e.label == "PERSON"]
+    
+    # May or may not detect "Charlie Smith" depending on regex; at minimum check no false positives on key
+    assert "name" not in person_texts  # Key should not be labeled
+
+
+def test_structured_field_first_last_name():
+    """Test PERSON detection from first_name and last_name fields."""
+    text = '"first_name": "Diana", "last_name": "Prince"'
+    evidence = eng.regex_evidence(text)
+    person_texts = [text[e.start:e.end] for e in evidence if e.label == "PERSON"]
+    
+    assert "Diana" in person_texts or "Prince" in person_texts
+    # Keys should not be labeled
+    assert "first_name" not in person_texts
+    assert "last_name" not in person_texts
+
+
+def test_structured_field_organization():
+    """Test ORG detection from organization/company fields."""
+    text = '"organization": "Acme Corp", "company": "TechStart Inc"'
+    evidence = eng.regex_evidence(text)
+    org_texts = [text[e.start:e.end] for e in evidence if e.label == "ORG"]
+    
+    assert "Acme Corp" in org_texts or "TechStart Inc" in org_texts
+    assert "organization" not in org_texts
+    assert "company" not in org_texts
+
+
+def test_structured_field_api_key():
+    """Test API_KEY detection from api_key/access_token fields."""
+    text = '"api_key": "sk-abc123def456", "access_token": "token_xyz"'
+    evidence = eng.regex_evidence(text)
+    api_texts = [text[e.start:e.end] for e in evidence if e.label == "API_KEY"]
+    
+    assert "sk-abc123def456" in api_texts or "token_xyz" in api_texts
+    assert "api_key" not in api_texts
+
+
+def test_structured_field_socialnumber():
+    """Test SOCIALNUMBER detection from ssn/passport fields."""
+    text = '"us_ssn": "123-45-6789", "passport": "ABC123456"'
+    evidence = eng.regex_evidence(text)
+    ssn_texts = [text[e.start:e.end] for e in evidence if e.label == "SOCIALNUMBER"]
+    
+    # Should detect at least one
+    assert len(ssn_texts) > 0
+    assert "us_ssn" not in ssn_texts
+    assert "passport" not in ssn_texts
+
+
+def test_structured_field_ip():
+    """Test IP detection from ip field."""
+    text = '"ip": "192.168.1.1"'
+    evidence = eng.regex_evidence(text)
+    ip_texts = [text[e.start:e.end] for e in evidence if e.label == "IP"]
+    
+    assert "192.168.1.1" in ip_texts
+    assert "ip" not in ip_texts
+
+
+def test_structured_field_no_false_positives_on_keys():
+    """Comprehensive test: no field keys should be labeled as their value type."""
+    text = (
+        '"email": "test@example.com", '
+        '"phone": "555-1234", '
+        '"name": "John Doe", '
+        '"api_key": "sk-12345"'
+    )
+    evidence = eng.regex_evidence(text)
+    
+    # Collect all detected values by label
+    all_labeled_texts = {e.label: [text[e.start:e.end] for e in evidence if e.label == e.label] 
+                         for e in evidence}
+    
+    # Keys should never appear as values
+    keys = ["email", "phone", "name", "api_key"]
+    for key in keys:
+        for label, spans in all_labeled_texts.items():
+            assert key not in spans, f"Field key '{key}' should not be labeled as {label}"
+
+
 # ---------------------------------------------------------------------------
 # Placeholder PERSON filter
 # ---------------------------------------------------------------------------

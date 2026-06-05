@@ -249,6 +249,118 @@ STRUCTURED_LOCATION_REGEX = re.compile(
     re.IGNORECASE,
 )
 
+# Generalized structured field detection mapping: field key names → canonical entity labels.
+# When a field key matches a label, the field VALUE is labeled with that entity type.
+# Example: "email": "john@example.com" → the VALUE "john@example.com" is labeled EMAIL
+_FIELD_KEY_LABEL_MAP = {
+    # PERSON fields
+    "PERSON": "PERSON",
+    "FIRST_NAME": "PERSON",
+    "LAST_NAME": "PERSON",
+    "FULL_NAME": "PERSON",
+    "NAME": "PERSON",
+    "GIVENNAME1": "PERSON",
+    "GIVENNAME2": "PERSON",
+    "LASTNAME1": "PERSON",
+    "LASTNAME2": "PERSON",
+    "LASTNAME3": "PERSON",
+    # ORG fields
+    "ORG": "ORG",
+    "ORGANIZATION": "ORG",
+    "COMPANY": "ORG",
+    # LOCATION fields
+    "LOCATION": "LOCATION",
+    "LOC": "LOCATION",
+    "CITY": "LOCATION",
+    "STATE": "LOCATION",
+    "COUNTRY": "LOCATION",
+    "ADDRESS": "LOCATION",
+    "STREET": "LOCATION",
+    "BUILDING": "LOCATION",
+    "POSTCODE": "LOCATION",
+    "SECADDRESS": "LOCATION",
+    # EMAIL fields
+    "EMAIL": "EMAIL",
+    "EMAIL_ADDRESS": "EMAIL",
+    # PHONE fields
+    "PHONE": "PHONE",
+    "PHONE_NUMBER": "PHONE",
+    "TEL": "PHONE",
+    "MOBILE": "PHONE",
+    "MOBILE_PHONE_NUMBER": "PHONE",
+    # API_KEY fields
+    "API_KEY": "API_KEY",
+    "APIKEY": "API_KEY",
+    "ACCESS_TOKEN": "API_KEY",
+    # DATE/TIME fields
+    "DATE": "DATE",
+    "TIME": "DATE",
+    "BOD": "DATE",
+    # IP fields
+    "IP": "IP",
+    # SOCIALNUMBER fields
+    "SOCIALNUMBER": "SOCIALNUMBER",
+    "PASSPORT": "SOCIALNUMBER",
+    "IDCARD": "SOCIALNUMBER",
+    "DRIVERLICENSE": "SOCIALNUMBER",
+    "CARDISSUER": "SOCIALNUMBER",
+    "PASS": "SOCIALNUMBER",
+    "US_SSN": "SOCIALNUMBER",
+    "CREDIT_CARD": "SOCIALNUMBER",
+    "CRYPTO": "SOCIALNUMBER",
+    # USERNAME fields
+    "USERNAME": "USERNAME",
+    # Additional field aliases
+    "GEOCOORD": "LOCATION",
+    "TITLE": "PERSON",
+    "SEX": "PERSON",
+}
+
+# Build regex for all field keys except those already in STRUCTURED_LOCATION_REGEX
+_LOCATION_FIELD_SET = {
+    "COUNTRY", "CITY", "STATE", "STREET", "BUILDING", "POSTCODE", 
+    "ZIPCODE", "ZIP_CODE", "ZIP", "ADDRESS", "LOCATION", "DISTRICT", 
+    "REGION", "PROVINCE", "COUNTY", "SUBURB", "LOCALITY"
+}
+_ALL_FIELD_KEYS_EXCEPT_LOC = "|".join(
+    k.lower() for k in _FIELD_KEY_LABEL_MAP.keys()
+    if k.upper() not in _LOCATION_FIELD_SET
+)
+
+STRUCTURED_FIELD_REGEX = re.compile(
+    r"(?:"
+    # JSON / YAML: "key": "value" or 'key': 'value'
+    r"""(?:["']?)(?:""" + _ALL_FIELD_KEYS_EXCEPT_LOC + r""")(?:["']?)\s*[":]\s*["']([^"'\n,\[\]{}<>]{1,80})["']"""
+    # Markdown / plain text: "- Key: Value"
+    r"""|(?:[-*]\s*)?(?:\*{0,2})(?:""" + _ALL_FIELD_KEYS_EXCEPT_LOC + r""")(?:\*{0,2}):\s*([^\n,\[\]{}<>*|]{1,80})"""
+    # XML tags: <key>Value</key>
+    r"""|<(?:""" + _ALL_FIELD_KEYS_EXCEPT_LOC + r""")>([^<]{1,80})</(?:""" + _ALL_FIELD_KEYS_EXCEPT_LOC + r""")>"""
+    r")",
+    re.IGNORECASE,
+)
+
+def _extract_field_key_from_match(matched_text: str) -> Optional[str]:
+    """Extract the field key name from a structured field regex match.
+    
+    Given a matched string like '"email": "john@..."' or '<phone>555-1234</phone>',
+    extracts the key ('email' or 'phone'). Returns the key mapped to a canonical label,
+    or None if no valid key found.
+    """
+    # Try JSON/YAML format: "key": or 'key': or key:
+    for match in re.finditer(r'(?:["\'"])?([a-z_]+)(?:["\'"])?(?:\s*[:=])',
+                             matched_text, re.IGNORECASE):
+        potential_key = match.group(1).upper()
+        if potential_key in _FIELD_KEY_LABEL_MAP:
+            return potential_key
+
+    # Try XML format: <key>
+    for match in re.finditer(r'<([a-z_]+)>', matched_text, re.IGNORECASE):
+        potential_key = match.group(1).upper()
+        if potential_key in _FIELD_KEY_LABEL_MAP:
+            return potential_key
+
+    return None
+
 # USERNAME patterns
 # 1) Separator format with digit presence (to avoid common hyphenated words):
 #    maria-rosaria.amardi1962, user_123
@@ -267,7 +379,7 @@ USERNAME_OPAQUE_REGEX = re.compile(
 # 3) Context-keyed usernames (captures value after username-ish keys):
 #    "username": "R21", participant_id: '10mavus.tancev', caller: ChuWen123
 USERNAME_CONTEXT_REGEX = re.compile(
-    r"(?:\b(?:username|user|participant_id|caller|login(?:_id)?|handle)\b\s*[:=]\s*[\"']?)"
+    r"(?:[\"']?\b(?:username|user|participant_id|caller|login(?:_id)?|handle)\b[\"']?\s*[:=]\s*[\"']?)"
     r"([a-zA-Z0-9][a-zA-Z0-9._\-]{1,31})",
     re.IGNORECASE,
 )
@@ -611,6 +723,52 @@ def regex_evidence(text: str) -> List[Evidence]:
             if span not in _username_seen_spans:
                 _username_seen_spans.add(span)
                 evidence.append(Evidence(span[0], span[1], "USERNAME", "regex", 0.68))
+
+    # Generalized structured field detection for all entity labels.
+    # Maps field keys to canonical entity labels. Only the VALUE is labeled.
+    # Example: "email": "john@example.com" → "john@example.com" labeled as EMAIL
+    # Skip if the value already matches a higher-confidence pattern.
+    # Also skip if we've already detected this exact span with the same label.
+    existing_spans = {(e.start, e.end, e.label) for e in evidence}
+
+    for m in STRUCTURED_FIELD_REGEX.finditer(text):
+        grp = next((i for i in (1, 2, 3) if m.group(i) is not None), None)
+        if grp is not None:
+            value = m.group(grp).strip()
+            field_key = _extract_field_key_from_match(m.group(0))
+
+            if field_key and field_key in _FIELD_KEY_LABEL_MAP:
+                mapped_label = _FIELD_KEY_LABEL_MAP[field_key]
+                if value:
+                    vs = m.start(grp) + m.group(grp).index(value.lstrip())
+                    ve = vs + len(value)
+
+                    # Skip if we've already detected this exact span with this label
+                    if (vs, ve, mapped_label) in existing_spans:
+                        continue
+
+                    # Skip if value looks like it's already a higher-confidence pattern
+                    # For example, if field key is "username" but value is an email address
+                    if mapped_label == "USERNAME":
+                        if EMAIL_REGEX.search(value):
+                            # Likely an email, skip USERNAME detection
+                            continue
+                        # Username must not start with underscore
+                        if value.startswith("_"):
+                            continue
+
+                    # Confidence varies by label type
+                    confidence_map = {
+                        "API_KEY": 0.93,
+                        "EMAIL": 0.90,
+                        "PHONE": 0.80,
+                        "DATE": 0.75,
+                        "IP": 0.88,
+                        "SOCIALNUMBER": 0.85,
+                    }
+                    confidence = confidence_map.get(mapped_label, 0.72)
+                    evidence.append(Evidence(vs, ve, mapped_label, "regex", confidence))
+                    existing_spans.add((vs, ve, mapped_label))
 
     return evidence
 
