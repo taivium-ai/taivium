@@ -160,8 +160,8 @@ def main() -> None:
 
     settings_results = [
         # {"metrics": {}, "detection_func": presidio_detection, "spacy_model_name": "en_core_web_lg"},
-        # {"metrics": {}, "detection_func": taivium_detection, "spacy_model_name": "en_core_web_sm"},
-        {"metrics": {}, "detection_func": taivium_detection, "spacy_model_name": "en_core_web_lg"},
+        {"metrics": {}, "detection_func": taivium_detection, "spacy_model_name": "en_core_web_sm"},
+        # {"metrics": {}, "detection_func": taivium_detection, "spacy_model_name": "en_core_web_lg"},
     ]
 
     # Determine which detections to run

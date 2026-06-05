@@ -189,7 +189,7 @@ Module-level utility in `engine.py` that replaces every entity ID token in `text
 
 **Methods:**
 - Regex
-- spaCy NER
+- Adaptive NER routing (spaCy for short structured payloads, GLiNER for longer contextual payloads)
 - Transformer-based NER
 - Optional LLM tagging
 
@@ -204,10 +204,12 @@ Input Text
 [Layer 0] org_list evidence (opt-in: known_orgs=[...])
     |
     v
-[Layer 1] spaCy evidence
+[Layer 1] regex evidence (always on)
     |
     v
-[Layer 2] regex evidence
+[Layer 2] adaptive NER route
+    - len(text) < 100  -> spaCy
+    - len(text) >= 100 -> GLiNER
     |
     v
 [Layer 3] transformer evidence (opt-in: use_transformer=True)
@@ -273,6 +275,7 @@ The function returns a list of `Evidence` objects with `source="org_list"` and `
 
 * Each layer runs independently; failures in one layer do not block others
 * org_list is checked first (Layer 0) as an opt-in compliance feature
+* Adaptive threshold defaults to 100 characters (`short_text_threshold`)
 * Evidence is merged first, then canonicalized
 * Canonicalization uses a sweep-line overlap-cluster algorithm: overlapping evidence spans are grouped into connected clusters, then each cluster is resolved to one canonical entity via weighted label voting
 * After canonicalization, the semantic recurrence layer finds repeated surface-form mentions only for recurrence-eligible canonical entities (default: `EMAIL`, `PHONE`, `API_KEY`; gated heuristics for `PERSON` and `ORG`) and adds them as new, non-overlapping entities with source="recurrence", inheriting canonical `evidence_sources` and `confidence`. Matching uses exact substring scanning plus manual boundary validation (Unicode-aware character classes), not regex `\\b` heuristics.

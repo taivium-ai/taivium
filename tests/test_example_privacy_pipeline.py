@@ -332,10 +332,12 @@ class TestSection4TransformerAndLlm:
 
     def test_transformer_evidence_adds_source(self, monkeypatch):
         """With use_transformer=True the transformer source appears in evidence_sources."""
+        text = "Dr. Emily Clarke joined Horizon AI in Boston."
         self._mock_transformer(monkeypatch, [
             {"entity_group": "PER", "score": 0.99, "start": 4, "end": 16, "word": "Emily Clarke"},
         ])
         result = run_section4_transformer_and_llm(
+            text=text,
             use_transformer=True, use_llm=False, verbose=False
         )
         person_entities = [
@@ -345,10 +347,12 @@ class TestSection4TransformerAndLlm:
 
     def test_transformer_blends_confidence(self, monkeypatch):
         """Confidence is the mean of spaCy (0.75) and transformer scores."""
+        text = "Dr. Emily Clarke joined Horizon AI in Boston."
         self._mock_transformer(monkeypatch, [
             {"entity_group": "PER", "score": 1.0, "start": 4, "end": 16, "word": "Emily Clarke"},
         ])
         result = run_section4_transformer_and_llm(
+            text=text,
             use_transformer=True, use_llm=False, verbose=False
         )
         person = next(
@@ -377,11 +381,13 @@ class TestSection4TransformerAndLlm:
 
     def test_llm_evidence_adds_source(self, monkeypatch):
         """With use_llm=True the llm source appears in evidence_sources."""
+        text = "Dr. Emily Clarke joined Horizon AI in Boston."
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
         self._mock_llm(monkeypatch, [
             {"text": "Emily Clarke", "type": "PERSON"},
         ])
         result = run_section4_transformer_and_llm(
+            text=text,
             use_transformer=False, use_llm=True, verbose=False
         )
         person_entities = [e for e in result["entities"] if e["label"] == "PERSON"]

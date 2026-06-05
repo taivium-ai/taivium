@@ -59,7 +59,7 @@ Every LLM call is a potential data leak.
 Your App ──► Taivium ──► LLM (OpenAI / Claude / local)
                 │
     ┌──────────────────────────────┐
-    │ Detection Layer              │  spaCy · regex · transformer · LLM
+    │ Detection Layer              │  Adaptive: regex+spaCy or regex+GLiNER · transformer · LLM
     │ Span Canonicalization        │  one entity per span
     │ Identity Engine              │  deterministic pseudonyms
     │ Policy Engine                │  ALLOW · ANONYMIZE · BLOCK
@@ -68,6 +68,16 @@ Your App ──► Taivium ──► LLM (OpenAI / Claude / local)
                 │
         Optional response restoration
 ```
+
+### Adaptive Cascading Pipeline
+
+Taivium routes detector execution by payload length to balance latency and context accuracy:
+
+- Fast Track (`len(text) < 100`): `regex_evidence` + `spacy_evidence`
+- Context Track (`len(text) >= 100`): `regex_evidence` + `gliner_evidence`
+
+This keeps short structured inputs on a lightweight path while reserving GLiNER for
+long narrative text where contextual entity resolution matters most.
 
 **Key idea:**  
 Each real-world entity gets a **stable pseudonymous ID** across the session.

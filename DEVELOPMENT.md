@@ -59,7 +59,10 @@ PYTHONPATH=src pytest tests/
 
 `Taivium.process()` follows this sequence:
 
-1. Collect detector evidence (`spacy_evidence`, `regex_evidence` [EMAIL/PHONE/API_KEY/IP/DATE/SOCIALNUMBER with calibrated confidence], `transformer_evidence`, `llm_evidence`)
+1. Collect detector evidence via adaptive routing:
+  - Fast track (`len(text) < 100`): `regex_evidence` + `spacy_evidence`
+  - Context track (`len(text) >= 100`): `regex_evidence` + `gliner_evidence`
+  - Optional layers: `transformer_evidence`, `llm_evidence`
 2. Canonicalize spans (`canonicalize_spans`) — sweep-line overlap-cluster grouping produces one canonical entity per non-overlapping cluster via weighted label vote and longest-span selection
 2b. Find semantic recurrences (`find_recurrences`) — add repeated surface-form mentions of canonical entities missed by NER for recurrence-eligible entities only (token-boundary safe, non-overlapping; avoids ambiguous short PERSON/LOCATION/acronym cloning)
 3. Resolve deterministic IDs (`IdentityEngine.resolve`)
@@ -107,7 +110,9 @@ for entity_id, entity_meta in result["mapping"].items():
 
 ### spaCy NER Configuration
 
-The spaCy detector defaults to `en_core_web_sm` and is configurable via `spacy_model_name`:
+The spaCy detector defaults to `en_core_web_sm` and is configurable via `spacy_model_name`.
+Adaptive routing uses a default `short_text_threshold=100` characters and is configurable
+via both `Taivium(short_text_threshold=...)` and `module_engine_process(..., options={"short_text_threshold": ...})`:
 
 ```python
 from taivium.engine import Taivium, module_engine_process
@@ -129,7 +134,7 @@ result = module_engine_process(
 
 `Taivium.process()` follows this sequence:
 
-1. Collect detector evidence (`spacy_evidence`, `regex_evidence` [calibrated confidence], `transformer_evidence`, `llm_evidence`)
+1. Collect detector evidence via adaptive routing (`regex + spaCy` for short text, `regex + GLiNER` for long text), plus optional transformer/LLM layers
 2. Canonicalize spans (`canonicalize_spans`) — sweep-line overlap-cluster grouping produces one canonical entity per non-overlapping cluster via weighted label vote and longest-span selection
 2b. Find semantic recurrences (`find_recurrences`) — add repeated surface-form mentions of canonical entities missed by NER for recurrence-eligible entities only (token-boundary safe, non-overlapping; avoids ambiguous short PERSON/LOCATION/acronym cloning)
 3. Resolve deterministic IDs (`IdentityEngine.resolve`) with privacy-preserving options:

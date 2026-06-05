@@ -492,22 +492,42 @@ RECURRENCE_ALLOWED = {
 }
 
 
+DEFAULT_SHORT_TEXT_THRESHOLD = 100
+
+
+def _normalize_short_text_threshold(short_text_threshold: int) -> int:
+    """Returns a safe short-text routing threshold in characters."""
+    if short_text_threshold <= 0:
+        logger.warning(
+            "Invalid short_text_threshold=%s; using default %s",
+            short_text_threshold,
+            DEFAULT_SHORT_TEXT_THRESHOLD,
+        )
+        return DEFAULT_SHORT_TEXT_THRESHOLD
+    return short_text_threshold
+
+
 def collect_evidence(  # pylint: disable=too-many-arguments
     text: str,
     *,
     known_orgs: Optional[List[str]] = None,
     spacy_model_name: str = "en_core_web_sm",
+    short_text_threshold: int = DEFAULT_SHORT_TEXT_THRESHOLD,
     use_transformer: bool = False,
     use_llm: bool = False,
     transformer_fn: Optional[Callable[[str], List[Evidence]]] = None,
     llm_fn: Optional[Callable[[str], List[Evidence]]] = None,
 ) -> List[Evidence]:
-    """Collects raw evidence from known org list, regex, GLiNER, and optional layers.
+    """Collects raw evidence from an adaptive cascade and optional layers.
 
-    Detection order (for compliance-friendly auditing):
+    Adaptive routing:
+    - Fast track (``len(text) < short_text_threshold``): regex + spaCy.
+    - Context track (``len(text) >= short_text_threshold``): regex + GLiNER.
+
+    Detection order (for compliance-friendly auditing and deterministic behavior):
     1. known_orgs: Explicit organization list (if provided) - highest confidence
-    2. regex: Pattern-based PII detection
-    3. GLiNER: ML-based PERSON/LOCATION/ORGANIZATION detection
+    2. regex: Pattern-based PII detection (always enabled)
+    3. Adaptive NER route: spaCy (short text) OR GLiNER (long text)
     4. transformer/LLM: Optional advanced detectors
 
     Args:
@@ -515,6 +535,9 @@ def collect_evidence(  # pylint: disable=too-many-arguments
         known_orgs: Optional list of known organization names to match (case-insensitive).
                    Detected with confidence 0.95 for compliance-friendly auditing.
         spacy_model_name: spaCy model package name for NER.
+        short_text_threshold: Character threshold controlling adaptive routing.
+            Inputs shorter than this value use the fast route (regex + spaCy),
+            while longer inputs use the context route (regex + GLiNER).
         use_transformer: Master switch for the transformer detector layer. Must be
             ``True`` for the layer to run. When ``True`` and no *transformer_fn* is
             provided, uses the built-in BERT NER detector (requires
@@ -532,15 +555,29 @@ def collect_evidence(  # pylint: disable=too-many-arguments
     Returns:
         Aggregated evidence from enabled detector layers.
     """
+    short_text_threshold = _normalize_short_text_threshold(short_text_threshold)
     evidence = regex_evidence(text)
 
     # 0. Fast pre-filtering with known organization list (compliance-friendly)
     if known_orgs:
         evidence += org_list_evidence(text, known_orgs)
 
-    # 1. Use GLiNER as the default NER layer (higher precision than spaCy)
-    gliner_results = gliner_evidence(text, targets=["PERSON", "LOCATION", "ORGANIZATION"])
-    evidence += gliner_results
+    # 1. Adaptive NER route: fast path for short structured payloads,
+    # context path for longer narrative payloads.
+    if len(text) < short_text_threshold:
+        logger.debug(
+            "Adaptive detector route=fast len=%s threshold=%s",
+            len(text),
+            short_text_threshold,
+        )
+        evidence += spacy_evidence(text, model_name=spacy_model_name)
+    else:
+        logger.debug(
+            "Adaptive detector route=context len=%s threshold=%s",
+            len(text),
+            short_text_threshold,
+        )
+        evidence += gliner_evidence(text, targets=["PERSON", "LOCATION", "ORGANIZATION"])
 
     if use_transformer:
         evidence += (transformer_fn or transformer_evidence)(text)
@@ -555,6 +592,21 @@ def _resolve_spacy_model_name(options: Dict[str, Any]) -> str:
     Supports both `spacy_model_name` (preferred) and `model_name` (alias).
     """
     return str(options.get("spacy_model_name") or options.get("model_name") or "en_core_web_sm")
+
+
+def _resolve_short_text_threshold(options: Dict[str, Any]) -> int:
+    """Resolves adaptive short-text threshold from options with validation."""
+    raw = options.get("short_text_threshold", DEFAULT_SHORT_TEXT_THRESHOLD)
+    try:
+        threshold = int(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid short_text_threshold value=%r; using default %s",
+            raw,
+            DEFAULT_SHORT_TEXT_THRESHOLD,
+        )
+        return DEFAULT_SHORT_TEXT_THRESHOLD
+    return _normalize_short_text_threshold(threshold)
 
 
 # -----------------------------
@@ -1296,6 +1348,7 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         llm_fn: Optional[Callable[[str], List[Evidence]]] = None,
         spacy_model_name: str = "en_core_web_sm",
         model_name: Optional[str] = None,
+        short_text_threshold: int = DEFAULT_SHORT_TEXT_THRESHOLD,
         id_salt: Optional[str] = None,
         id_hash_len: int = 12,
     ):  # pylint: disable=too-many-arguments
@@ -1318,6 +1371,7 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         self.transformer_fn = transformer_fn
         self.llm_fn = llm_fn
         self.spacy_model_name = model_name or spacy_model_name
+        self.short_text_threshold = _normalize_short_text_threshold(short_text_threshold)
         self.latency_history: List[float] = []  # Stores recent processing latencies in milliseconds
 
     def process(self, text: str, known_orgs: Optional[List[str]] = None) -> Dict[str, Any]:  # pylint: disable=too-many-locals
@@ -1325,7 +1379,8 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         Process text through the privacy pipeline.
 
         Pipeline:
-            Detectors (spaCy/regex/org_list/LLM/transformer)
+            Detectors (adaptive: regex+spaCy for short text, regex+GLiNER for long text,
+            with org_list/LLM/transformer as configured)
             -> Evidence
             -> Canonical span resolver
             -> Identity resolver
@@ -1354,6 +1409,7 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
             text,
             known_orgs=known_orgs,
             spacy_model_name=self.spacy_model_name,
+            short_text_threshold=self.short_text_threshold,
             use_transformer=self.use_transformer,
             use_llm=self.use_llm,
             transformer_fn=self.transformer_fn,
@@ -1474,16 +1530,17 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
 
 
 # Thread-safe cache for Taivium instances keyed by options
-_engine_cache: Dict[Tuple[bool, bool, str, Optional[str], int], Taivium] = {}
+_engine_cache: Dict[Tuple[bool, bool, str, int, Optional[str], int], Taivium] = {}
 _engine_cache_lock = threading.Lock()
 
 
-def _options_key(parsed_options: Dict[str, Any]) -> Tuple[bool, bool, str, Optional[str], int]:
+def _options_key(parsed_options: Dict[str, Any]) -> Tuple[bool, bool, str, int, Optional[str], int]:
     # Only use options that affect instantiation, and make them hashable
     return (
         bool(parsed_options.get("use_transformer", False)),
         bool(parsed_options.get("use_llm", False)),
         _resolve_spacy_model_name(parsed_options),
+        _resolve_short_text_threshold(parsed_options),
         parsed_options.get("id_salt") or None,
         int(parsed_options.get("id_hash_len", 12)),
         # Do not include non-hashable objects like functions or custom classes
