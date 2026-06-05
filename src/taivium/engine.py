@@ -28,6 +28,7 @@ import os
 import spacy
 from huggingface_hub import snapshot_download
 from gliner import GLiNER
+import onnxruntime as rt
 
 from .transformer import transformer_evidence
 from .session_store import InMemorySessionStore, SessionStore, RedisSessionStore
@@ -173,7 +174,8 @@ DATE_REGEX = re.compile(
     # Optional ISO 8601 time suffix: T00:00:00 (avoids \b mismatch when T follows digits)
     r"\d{4}[-/]\d{1,2}[-/]\d{1,2}(?:T\d{2}:\d{2}:\d{2})?"
     r"|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}"
-    # Month name + day (with optional ordinal) + optional year: "October 18th, 1980", "June 4", "June/88"
+    # Month name + day (with optional ordinal)
+    #  + optional year: "October 18th, 1980", "June 4", "June/88"
     r"|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?"
     r"|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
     r"(?:\s+\d{1,2}(?:st|nd|rd|th)?(?:[,\s]+\d{4})?|[-/]\d{2,4})"
@@ -238,14 +240,15 @@ _LOCATION_FIELD_KEYS = (
     r"zip|address|location|district|region|province|county|suburb|locality"
 )
 STRUCTURED_LOCATION_REGEX = re.compile(
-    r"(?:"
-    # JSON / YAML: "key": "value" or 'key': 'value' (case-insensitive key)
-    r"""(?:["']?)(?:""" + _LOCATION_FIELD_KEYS + r""")(?:["']?)\s*[":]\s*["']([^"'\n,\[\]{}<>]{1,80})["']"""
-    # Markdown / plain text: "- Key: Value" or "**Key:** Value" or "Key: Value"
-    r"""|(?:[-*]\s*)?(?:\*{0,2})(?:""" + _LOCATION_FIELD_KEYS + r""")(?:\*{0,2}):\s*([^\n,\[\]{}<>*|]{1,80})"""
-    # XML tags: <key>Value</key>
-    r"""|<(?:""" + _LOCATION_FIELD_KEYS + r""")>([^<]{1,80})</(?:""" + _LOCATION_FIELD_KEYS + r""")>"""
-    r")",
+    (r"(?:"
+     r"""(?:["']?)(?:""" + _LOCATION_FIELD_KEYS + r""")(?:["']?)"""
+     r"""\s*[":]\s*["']([^"'\n,\[\]{}<>]{1,80})["']"""
+     r"""|(?:[-*]\s*)?(?:\*{0,2})(?:""" + _LOCATION_FIELD_KEYS + r""")"""
+     r"""(?:\*{0,2}):\s*([^\n,\[\]{}<>*|]{1,80})"""
+     r"""|<(?:""" + _LOCATION_FIELD_KEYS + r""")>([^<]{1,80})</(?:"""
+     + _LOCATION_FIELD_KEYS + r""")>"""
+     r")"
+    ),
     re.IGNORECASE,
 )
 
@@ -318,30 +321,31 @@ _FIELD_KEY_LABEL_MAP = {
 
 # Build regex for all field keys except those already in STRUCTURED_LOCATION_REGEX
 _LOCATION_FIELD_SET = {
-    "COUNTRY", "CITY", "STATE", "STREET", "BUILDING", "POSTCODE", 
-    "ZIPCODE", "ZIP_CODE", "ZIP", "ADDRESS", "LOCATION", "DISTRICT", 
+    "COUNTRY", "CITY", "STATE", "STREET", "BUILDING", "POSTCODE",
+    "ZIPCODE", "ZIP_CODE", "ZIP", "ADDRESS", "LOCATION", "DISTRICT",
     "REGION", "PROVINCE", "COUNTY", "SUBURB", "LOCALITY"
 }
 _ALL_FIELD_KEYS_EXCEPT_LOC = "|".join(
-    k.lower() for k in _FIELD_KEY_LABEL_MAP.keys()
+    k.lower() for k in _FIELD_KEY_LABEL_MAP
     if k.upper() not in _LOCATION_FIELD_SET
 )
 
 STRUCTURED_FIELD_REGEX = re.compile(
-    r"(?:"
-    # JSON / YAML: "key": "value" or 'key': 'value'
-    r"""(?:["']?)(?:""" + _ALL_FIELD_KEYS_EXCEPT_LOC + r""")(?:["']?)\s*[":]\s*["']([^"'\n,\[\]{}<>]{1,80})["']"""
-    # Markdown / plain text: "- Key: Value"
-    r"""|(?:[-*]\s*)?(?:\*{0,2})(?:""" + _ALL_FIELD_KEYS_EXCEPT_LOC + r""")(?:\*{0,2}):\s*([^\n,\[\]{}<>*|]{1,80})"""
-    # XML tags: <key>Value</key>
-    r"""|<(?:""" + _ALL_FIELD_KEYS_EXCEPT_LOC + r""")>([^<]{1,80})</(?:""" + _ALL_FIELD_KEYS_EXCEPT_LOC + r""")>"""
-    r")",
+    (r"(?:"
+     r"""(?:["']?)(?:""" + _ALL_FIELD_KEYS_EXCEPT_LOC + r""")(?:["']?)"""
+     r"""\s*[":]\s*["']([^"'\n,\[\]{}<>]{1,80})["']"""
+     r"""|(?:[-*]\s*)?(?:\*{0,2})(?:""" + _ALL_FIELD_KEYS_EXCEPT_LOC + r""")"""
+     r"""(?:\*{0,2}):\s*([^\n,\[\]{}<>*|]{1,80})"""
+     r"""|<(?:""" + _ALL_FIELD_KEYS_EXCEPT_LOC + r""")>([^<]{1,80})</(?:"""
+     + _ALL_FIELD_KEYS_EXCEPT_LOC + r""")>"""
+     r")"
+    ),
     re.IGNORECASE,
 )
 
 def _extract_field_key_from_match(matched_text: str) -> Optional[str]:
     """Extract the field key name from a structured field regex match.
-    
+
     Given a matched string like '"email": "john@..."' or '<phone>555-1234</phone>',
     extracts the key ('email' or 'phone'). Returns the key mapped to a canonical label,
     or None if no valid key found.
@@ -379,8 +383,9 @@ USERNAME_OPAQUE_REGEX = re.compile(
 # 3) Context-keyed usernames (captures value after username-ish keys):
 #    "username": "R21", participant_id: '10mavus.tancev', caller: ChuWen123
 USERNAME_CONTEXT_REGEX = re.compile(
-    r"(?:[\"']?\b(?:username|user|participant_id|caller|login(?:_id)?|handle)\b[\"']?\s*[:=]\s*[\"']?)"
-    r"([a-zA-Z0-9][a-zA-Z0-9._\-]{1,31})",
+    (r"(?:[\"']?\b(?:username|user|participant_id|caller|login(?:_id)?|handle)"
+     r"\b[\"']?\s*[:=]\s*[\"']?)"
+     r"([a-zA-Z0-9][a-zA-Z0-9._\-]{1,31})"),
     re.IGNORECASE,
 )
 
@@ -388,7 +393,7 @@ USERNAME_CONTEXT_REGEX = re.compile(
 # Label normalization
 # -----------------------------
 def normalize_label(label: str) -> str:
-    """Normalizes internal NLP/Regex entity labels to match the 
+    """Normalizes internal NLP/Regex entity labels to match the
     canonical evaluation targets output by eval_datasets.py.
     """
     if not label:
@@ -409,13 +414,13 @@ def normalize_label(label: str) -> str:
         "EMAIL_ADDRESS": "EMAIL",  # Ensures internal variations map to 'EMAIL'
         "PHONE_NUMBER": "PHONE",   # Maps to evaluation canonical 'PHONE'
         "TEL": "PHONE",            # Backwards compatibility if engine catches TEL
-        
+
         # --- Expanding Regex Infrastructure (Unlocks the fallback metrics) ---
         "IP_ADDRESS": "IP",        # Maps your internal regex label -> canonical 'IP'
         "DATE_TIME": "DATE",       # Maps your internal dates/times -> canonical 'DATE'
         "TIME": "DATE",            # Matches eval_datasets.py conversion: TIME -> DATE
         "BOD": "DATE",             # Matches eval_datasets.py conversion: BOD -> DATE
-        
+
         # --- Document Identifier Grouping ---
         "US_SSN": "SOCIALNUMBER",  # Maps internal SSN -> canonical 'SOCIALNUMBER'
         "PASSPORT": "SOCIALNUMBER",
@@ -435,50 +440,61 @@ def normalize_label(label: str) -> str:
 @lru_cache(maxsize=1)
 def get_gliner_model():
     """Lazy-load and cache GLiNER ONNX quantized model for 5-10x speedup.
-    
+
     Uses the ONNX-quantized model from onnx-community/gliner_small-v2.1 to achieve
     significantly faster inference (5-10x) compared to full transformer weights.
-    
+
     On M2/M3, prefers CoreML provider (GPU + Neural Engine).
     Falls back to CUDA on NVIDIA, then CPU.
-    
+
     Returns:
         Loaded GLiNER model instance with ONNX quantization enabled.
     """
     try:
         # 1. Detect available ONNX execution providers
         try:
-            import onnxruntime as rt
             available_providers = rt.get_available_providers()
-            logger.info(f"Available ONNX providers: {available_providers}")
+            logger.info("Available ONNX providers: %s", available_providers)
         except ImportError:
             available_providers = ["CPUExecutionProvider"]
             logger.warning("onnxruntime not installed, using CPU only")
-        
+
         # 2. Configure preferred provider order: CoreML → CUDA → CPU
         preferred_providers = []
         if "CoreMLExecutionProvider" in available_providers:
             preferred_providers.append("CoreMLExecutionProvider")
-            logger.info("✅ CoreML provider available (M2/M3 GPU acceleration)")
+            logger.info(
+                "CoreML provider available (M2/M3 GPU acceleration)"
+            )
         if "CUDAExecutionProvider" in available_providers:
             preferred_providers.append("CUDAExecutionProvider")
-            logger.info("✅ CUDA provider available (NVIDIA GPU acceleration)")
+            logger.info(
+                "CUDA provider available (NVIDIA GPU acceleration)"
+            )
         if "CPUExecutionProvider" in available_providers:
             preferred_providers.append("CPUExecutionProvider")
-        
-        selected_provider = preferred_providers[0] if preferred_providers else "CPUExecutionProvider"
-        logger.info(f"🎯 Selected ONNX provider: {selected_provider}")
-        
+
+        selected_provider = (
+            preferred_providers[0]
+            if preferred_providers
+            else "CPUExecutionProvider"
+        )
+        logger.info("Selected ONNX provider: %s", selected_provider)
+
         # 3. Download the ONNX model repository from HuggingFace Hub
         repo_id = "onnx-community/gliner_small-v2.1"
-        logger.info(f"Downloading ONNX GLiNER model from {repo_id}...")
+        logger.info("Downloading ONNX GLiNER model from %s", repo_id)
         local_dir = snapshot_download(repo_id=repo_id)
-        
+
         # 4. Path to the quantized ONNX weights file
         onnx_model_file = os.path.join("onnx", "model_quantized.onnx")
 
-        logger.info(f"Loading GLiNER from {local_dir} with ONNX quantization on {selected_provider}")
-        
+        logger.info(
+            "Loading GLiNER from %s with ONNX quantization on %s",
+            local_dir,
+            selected_provider,
+        )
+
         # 5. Load GLiNER with explicit provider configuration
         model = GLiNER.from_pretrained(
             local_dir,
@@ -488,25 +504,31 @@ def get_gliner_model():
             trust_remote_code=True,
             providers=preferred_providers  # Use preferred provider order
         )
-        
+
         # 6. Verify actual provider in use (critical for confirming GPU acceleration)
         actual_provider = _verify_onnx_provider(model)
-        logger.info(f"✅ ONNX GLiNER loaded successfully on {actual_provider} (5-10x faster inference)")
-        
+        logger.info(
+            "ONNX GLiNER loaded successfully on %s (5-10x faster inference)",
+            actual_provider,
+        )
+
         if actual_provider != selected_provider:
             logger.warning(
-                f"⚠️  Provider mismatch: requested {selected_provider}, "
-                f"but using {actual_provider}. This may indicate GPU unavailability."
+                "Provider mismatch: requested %s, but using %s. "
+                "This may indicate GPU unavailability.",
+                selected_provider,
+                actual_provider,
             )
-        
+
         return model
-        
-    except Exception as e:
+
+    except Exception as e:  # pylint: disable=broad-exception-caught
         # Fallback to standard transformer weights if ONNX fails
         logger.warning(
-            f"ONNX GLiNER load failed ({e}), falling back to standard weights. "
+            "ONNX GLiNER load failed (%s), falling back to standard weights. "
             "Inference will be slower. Install onnxruntime for speedup: "
-            "pip install onnxruntime"
+            "pip install onnxruntime",
+            e,
         )
         return GLiNER.from_pretrained("knowledgator/gliner-pii-small-v1.0")
 
@@ -533,7 +555,7 @@ def gliner_evidence(text: str, targets: Optional[List[str]] = None) -> List[Evid
     try:
         model = get_gliner_model()
         predictions = model.predict_entities(text, target_labels, threshold=0.55)
-        
+
         for pred in predictions:
             # Normalize the label from GLiNER output (e.g., "name" → "PERSON")
             label = normalize_label(pred.get("label", "UNKNOWN"))
@@ -547,9 +569,9 @@ def gliner_evidence(text: str, targets: Optional[List[str]] = None) -> List[Evid
                     source="gliner",
                     confidence=gliner_confidence,  # High-confidence GLiNER scores
                 ))
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logger.warning("GLiNER detection failed: %s", e)
-    
+
     return evidence
 
 # Labels spaCy NER is trusted to emit.
@@ -559,43 +581,41 @@ def gliner_evidence(text: str, targets: Optional[List[str]] = None) -> List[Evid
 _SPACY_NER_LABELS = {"PERSON", "LOCATION", "ORG"}
 
 
-def _verify_onnx_provider(model: Any) -> str:
+def _verify_onnx_provider(model: Any) -> str:  # pylint: disable=unused-argument
     """Verify which ONNX execution provider is actually in use.
-    
+
     Introspects the loaded GLiNER model to determine which execution provider
     ONNX Runtime is actually using for inference. This confirms GPU acceleration
     is active if requested.
-    
+
     Since GLiNER doesn't expose the session directly, we use ONNX Runtime's
     environment to check which providers were loaded. The provider preference
     list is passed to GLiNER.from_pretrained(), so ONNX Runtime selects the
     first available provider from that list.
-    
+
     Args:
         model: Loaded GLiNER model instance.
-    
+
     Returns:
         String name of the likely active ONNX execution provider.
     """
     try:
-        import onnxruntime as rt
-        
+
         # Check all providers that ONNX Runtime has available
         available = rt.get_available_providers()
-        logger.debug(f"ONNX Runtime available providers: {available}")
-        
+        logger.debug("ONNX Runtime available providers: %s", available)
+
         # ONNX Runtime selects the first available provider from the preference list
         # We passed: ["CoreMLExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"]
         # So it will use the first one that's available
         if "CoreMLExecutionProvider" in available:
             return "CoreMLExecutionProvider"
-        elif "CUDAExecutionProvider" in available:
+        if "CUDAExecutionProvider" in available:
             return "CUDAExecutionProvider"
-        else:
-            return "CPUExecutionProvider"
-            
-    except Exception as e:
-        logger.warning(f"Failed to verify ONNX provider: {e}")
+        return "CPUExecutionProvider"
+
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.warning("Failed to verify ONNX provider: %s", e)
         return "CPUExecutionProvider (fallback)"
 
 
@@ -629,6 +649,7 @@ def spacy_evidence(text: str, model_name: str = "en_core_web_sm") -> List[Eviden
 
     return evidence
 
+# pylint: disable=too-many-locals,too-many-branches,too-many-statements
 def regex_evidence(text: str) -> List[Evidence]:
     """
     Collects high-confidence evidence from regex-based PII/secret patterns.
@@ -731,44 +752,55 @@ def regex_evidence(text: str) -> List[Evidence]:
     # Also skip if we've already detected this exact span with the same label.
     existing_spans = {(e.start, e.end, e.label) for e in evidence}
 
+    def _should_skip_field_value(mapped_label: str, value: str) -> bool:
+        """Check if a field value should be skipped due to validation rules."""
+        if mapped_label == "USERNAME":
+            # Skip if value is likely an email address
+            if EMAIL_REGEX.search(value):
+                return True
+            # Skip if username starts with underscore
+            if value.startswith("_"):
+                return True
+        return False
+
     for m in STRUCTURED_FIELD_REGEX.finditer(text):
         grp = next((i for i in (1, 2, 3) if m.group(i) is not None), None)
-        if grp is not None:
-            value = m.group(grp).strip()
-            field_key = _extract_field_key_from_match(m.group(0))
+        if grp is None:
+            continue
 
-            if field_key and field_key in _FIELD_KEY_LABEL_MAP:
-                mapped_label = _FIELD_KEY_LABEL_MAP[field_key]
-                if value:
-                    vs = m.start(grp) + m.group(grp).index(value.lstrip())
-                    ve = vs + len(value)
+        value = m.group(grp).strip()
+        field_key = _extract_field_key_from_match(m.group(0))
 
-                    # Skip if we've already detected this exact span with this label
-                    if (vs, ve, mapped_label) in existing_spans:
-                        continue
+        if not field_key or field_key not in _FIELD_KEY_LABEL_MAP:
+            continue
 
-                    # Skip if value looks like it's already a higher-confidence pattern
-                    # For example, if field key is "username" but value is an email address
-                    if mapped_label == "USERNAME":
-                        if EMAIL_REGEX.search(value):
-                            # Likely an email, skip USERNAME detection
-                            continue
-                        # Username must not start with underscore
-                        if value.startswith("_"):
-                            continue
+        mapped_label = _FIELD_KEY_LABEL_MAP[field_key]
+        if not value:
+            continue
 
-                    # Confidence varies by label type
-                    confidence_map = {
-                        "API_KEY": 0.93,
-                        "EMAIL": 0.90,
-                        "PHONE": 0.80,
-                        "DATE": 0.75,
-                        "IP": 0.88,
-                        "SOCIALNUMBER": 0.85,
-                    }
-                    confidence = confidence_map.get(mapped_label, 0.72)
-                    evidence.append(Evidence(vs, ve, mapped_label, "regex", confidence))
-                    existing_spans.add((vs, ve, mapped_label))
+        vs = m.start(grp) + m.group(grp).index(value.lstrip())
+        ve = vs + len(value)
+
+        # Skip if we've already detected this exact span with this label
+        if (vs, ve, mapped_label) in existing_spans:
+            continue
+
+        # Skip if value fails validation checks
+        if _should_skip_field_value(mapped_label, value):
+            continue
+
+        # Confidence varies by label type
+        confidence_map = {
+            "API_KEY": 0.93,
+            "EMAIL": 0.90,
+            "PHONE": 0.80,
+            "DATE": 0.75,
+            "IP": 0.88,
+            "SOCIALNUMBER": 0.85,
+        }
+        confidence = confidence_map.get(mapped_label, 0.72)
+        evidence.append(Evidence(vs, ve, mapped_label, "regex", confidence))
+        existing_spans.add((vs, ve, mapped_label))
 
     return evidence
 
@@ -972,45 +1004,45 @@ def _is_placeholder(entity: "Entity") -> bool:
 
 def _merge_adjacent_same_label_entities(text: str, entities: List[Entity]) -> List[Entity]:
     """Merge adjacent entities of the same label separated only by whitespace.
-    
+
     When two consecutive entities have the same label and are separated
     only by whitespace (spaces, tabs, newlines), merge them into a single
     entity spanning both tokens plus the whitespace between them.
-    
+
     Examples:
         - "John" (PERSON) + space + "Smith" (PERSON) → "John Smith" (PERSON)
         - "user@" (EMAIL) + space + "domain.com" (EMAIL) → "user@ domain.com" (EMAIL)
-    
+
     This postprocessing step increases recall for entities that are split
     across detector boundaries (e.g., multi-token names from spaCy NER).
-    
+
     Args:
         text: The original input text (needed to extract whitespace between spans).
         entities: Non-overlapping, sorted list of Entity objects.
-    
+
     Returns:
         Merged list of Entity objects with same-label adjacencies collapsed.
     """
     if len(entities) <= 1:
         return entities
-    
+
     merged: List[Entity] = []
     i = 0
-    
+
     while i < len(entities):
         current = entities[i]
-        
+
         # Look ahead for adjacent same-label entities
         j = i + 1
         last_end = current.end  # Track the end of the last entity in the merge sequence
-        
+
         while j < len(entities):
             next_ent = entities[j]
-            
+
             # Must have same label to merge
             if next_ent.label != current.label:
                 break
-            
+
             # Check if separated only by whitespace (from last merged entity to next)
             gap_text = text[last_end:next_ent.start]
             if gap_text and gap_text.strip() == "":
@@ -1020,13 +1052,13 @@ def _merge_adjacent_same_label_entities(text: str, entities: List[Entity]) -> Li
             else:
                 # Gap contains non-whitespace; stop merging
                 break
-        
+
         if j > i + 1:
             # Merged multiple entities: current spans from i to j-1
             first = entities[i]
             last = entities[j - 1]
             merged_text = text[first.start:last.end]
-            
+
             # Preserve evidence sources and take average confidence
             all_evidence_sources = set()
             total_confidence = 0.0
@@ -1034,7 +1066,7 @@ def _merge_adjacent_same_label_entities(text: str, entities: List[Entity]) -> Li
                 all_evidence_sources.update(entities[k].evidence_sources)
                 total_confidence += entities[k].confidence
             avg_confidence = total_confidence / (j - i)
-            
+
             merged.append(Entity(
                 text=merged_text,
                 label=current.label,
@@ -1049,7 +1081,7 @@ def _merge_adjacent_same_label_entities(text: str, entities: List[Entity]) -> Li
             # No merge; keep current entity as-is
             merged.append(current)
             i += 1
-    
+
     return merged
 
 
@@ -1374,7 +1406,7 @@ def recurrence_evidence(  # pylint: disable=too-many-locals
             (default: EMAIL, PHONE, API_KEY; PERSON and ORG are gated by heuristics).
         - For each eligible canonical entity, scans for exact substring matches in the text,
             with strict boundary checks (word/non-word/whitespace) to avoid overmatching.
-        - Skips spans already covered by canonical entities; ensures no overlap with 
+        - Skips spans already covered by canonical entities; ensures no overlap with
             canonical spans.
         - Emits new Evidence records with ``source="recurrence"`` for each safe,
             non-overlapping recurrence found.
@@ -1542,7 +1574,7 @@ class IdentityEngine:
         self.hash_len = hash_len
 
     def generate_id(self, text: str, label: str) -> str:
-        """Generates a deterministic ID for a given entity text and label, 
+        """Generates a deterministic ID for a given entity text and label,
             optionally scoped by salt.
 
         The same (text, label, salt, hash_len) tuple always produces the same ID.
@@ -1755,7 +1787,7 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
             only).  Any object satisfying the :class:`~taivium.session_store.SessionStore`
             protocol is accepted (``RedisSessionStore``, custom backends, etc.).
         id_salt (str, optional):
-            Optional salt to scope entity IDs to a tenant, session, or namespace. 
+            Optional salt to scope entity IDs to a tenant, session, or namespace.
             If not provided, IDs are globally stable (legacy behavior).
         id_hash_len (int, optional):
             Number of hex digits to use from the hash (default 12 for legacy compatibility).
@@ -1782,7 +1814,7 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         # Both salt and custom hash length
         engine = Taivium(id_salt="tenant_1234", id_hash_len=24)
     """
-    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    def __init__(  # pylint: disable=too-many-arguments
         self,
         policy_engine: Optional[PolicyEngine] = None,
         session_store: Optional[SessionStore] = None,
@@ -1801,7 +1833,7 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         model_name: Backward-compatible alias for spacy_model_name.
             If both are provided, model_name takes precedence.
         id_salt: Optional string to scope entity IDs (tenant/session/namespace).
-        id_hash_len: Number of hex digits to use from the hash (default 12 for 
+        id_hash_len: Number of hex digits to use from the hash (default 12 for
         legacy compatibility).
         If not provided, IDs are globally stable (legacy behavior).
         """
@@ -1818,7 +1850,8 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         self.short_text_threshold = _normalize_short_text_threshold(short_text_threshold)
         self.latency_history: List[float] = []  # Stores recent processing latencies in milliseconds
 
-    def process(self, text: str, known_orgs: Optional[List[str]] = None) -> Dict[str, Any]:  # pylint: disable=too-many-locals
+    # pylint: disable=too-many-locals
+    def process(self, text: str, known_orgs: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         Process text through the privacy pipeline.
 
@@ -1833,13 +1866,13 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
 
         Detection is uncertain.
         Canonicalization defines truth.
-        Identity is separate from spans.    
-        
+        Identity is separate from spans.
+
         Args:
             text (str): The input text to be processed.
             known_orgs: Optional list of known organization names to match (case-insensitive).
-                       When provided, organizations in this list are detected with high confidence (0.95)
-                       before GLiNER ML detection, enabling compliance-friendly auditable detection.
+                When provided, organizations in this list are detected with high confidence (0.95)
+                before GLiNER ML detection, enabling compliance-friendly auditable detection.
 
         Returns:
             dict: A dictionary containing the original text, anonymized text,
@@ -1891,7 +1924,8 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         before_merge = len(all_ents)
         all_ents = _merge_adjacent_same_label_entities(text, all_ents)
         if len(all_ents) < before_merge:
-            logger.debug("Merged adjacent same-label entities: %d → %d", before_merge, len(all_ents))
+            logger.debug(
+                "Merged adjacent same-label entities: %d → %d", before_merge, len(all_ents))
 
         # Hard invariant before identity/policy/transform stages.
         assert_non_overlapping(all_ents)
@@ -2138,7 +2172,7 @@ def module_engine_process(text: str, options: Any = None) -> "Dict[str, Any]":
     """
     Thread-safe, multi-config process function for gRPC server or programmatic use.
     Accepts options as a dict or JSON string. Caches Taivium instances by options for efficiency.
-    
+
     Supports per-tenant session stores:
     - If 'tenant_id' is in options, creates a RedisSessionStore with that tenant
         - Uses SESSION_TTL_SECONDS as default TTL and optional
@@ -2153,7 +2187,7 @@ def module_engine_process(text: str, options: Any = None) -> "Dict[str, Any]":
     """
     _logger = logging.getLogger("taivium.engine")
     _logger.info(
-        "[DEBUG] process() called with text type: %s, options type: %s", 
+        "[DEBUG] process() called with text type: %s, options type: %s",
         type(text).__name__, type(options).__name__)
 
     parsed_options, options_error = _parse_module_engine_options(options, _logger)

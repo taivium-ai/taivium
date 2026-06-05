@@ -3,13 +3,12 @@
 import json
 import logging
 import os
-import sys
 from datetime import datetime, timezone
 from typing import Iterable
 
 logger = logging.getLogger("taivium.audit")
 
-# pylint: disable=too-many-arguments,too-many-positional-arguments
+# pylint: disable=too-many-arguments
 def log_audit_event(
     operation: str,
     session_id: str,
