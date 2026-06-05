@@ -60,17 +60,49 @@ PYTHONPATH=src pytest tests/
 `Taivium.process()` follows this sequence:
 
 1. Collect detector evidence via adaptive routing:
-  - Fast track (`len(text) < 100`): `regex_evidence` + `spacy_evidence`
-  - Context track (`len(text) >= 100`): `regex_evidence` + `gliner_evidence`
-  - Optional layers: `transformer_evidence`, `llm_evidence`
+  - Fast track (`len(text) < 100`): `regex_evidence` (includes structured field detection) + `spacy_evidence`
+  - Context track (`len(text) >= 100`): `regex_evidence` (includes structured field detection) + `gliner_evidence`
+  - Optional layers: `org_list_evidence`, `transformer_evidence`, `llm_evidence`
 2. Canonicalize spans (`canonicalize_spans`) — sweep-line overlap-cluster grouping produces one canonical entity per non-overlapping cluster via weighted label vote and longest-span selection
 2b. Find semantic recurrences (`find_recurrences`) — add repeated surface-form mentions of canonical entities missed by NER for recurrence-eligible entities only (token-boundary safe, non-overlapping; avoids ambiguous short PERSON/LOCATION/acronym cloning)
-3. Resolve deterministic IDs (`IdentityEngine.resolve`)
+3. Resolve deterministic IDs (`IdentityEngine.resolve`) with privacy-preserving options:
+  - `id_salt`: Optional salt to scope entity IDs to a tenant, session, or namespace
+  - `id_hash_len`: Number of hex digits to use from the hash (default 12)
 4. Persist mapping to `session_store` (`InMemorySessionStore` or `RedisSessionStore`)
 5. Evaluate policy (`PolicyEngine.evaluate`)
 6. Transform text (`transform`)
 
-## Detector Configuration
+## Detector Features
+
+### Structured Field Detection
+
+The `regex_evidence()` function includes generalized field detection that extracts sensitive values from structured formats (JSON, YAML, Markdown, XML). This increases recall for values that might be missed by NER patterns alone.
+
+**Key Features:**
+
+- **Value-only labeling**: Only the VALUE is labeled, not the key (e.g., `"email": "john@example.com"` → only the email value is labeled)
+- **50+ field key mappings**: Maps field names like `email`, `phone`, `username`, `organization`, `api_key`, etc. to canonical entity labels
+- **Format support**: JSON, YAML, Markdown, and XML field structures
+- **Validation**: Deduplicates against existing spans, validates USERNAME fields against emails
+- **Label-specific confidence**: Adjusts confidence by label type (API_KEY: 0.93, EMAIL: 0.90, PHONE: 0.80, etc.)
+
+**Example:**
+
+```python
+from taivium import Taivium
+
+text = '''
+{
+  "email": "alice@example.com",
+  "phone": "+1-555-1234",
+  "username": "alice_smith"
+}
+'''
+
+pipeline = Taivium()
+result = pipeline.process(text)
+# All three values are detected with appropriate labels and high confidence
+```
 
 ### Organization List (Compliance-Friendly Detection)
 
@@ -123,7 +155,6 @@ pipeline = Taivium()
 # Configure a different installed spaCy model
 pipeline = Taivium(spacy_model_name="en_core_web_lg")
 
-
 # Also configurable in module_engine_process options
 result = module_engine_process(
   "Alice Johnson from Acme Corp",
@@ -131,41 +162,7 @@ result = module_engine_process(
 )
 ```
 
-
-`Taivium.process()` follows this sequence:
-
-1. Collect detector evidence via adaptive routing (`regex + spaCy` for short text, `regex + GLiNER` for long text), plus optional transformer/LLM layers
-2. Canonicalize spans (`canonicalize_spans`) — sweep-line overlap-cluster grouping produces one canonical entity per non-overlapping cluster via weighted label vote and longest-span selection
-2b. Find semantic recurrences (`find_recurrences`) — add repeated surface-form mentions of canonical entities missed by NER for recurrence-eligible entities only (token-boundary safe, non-overlapping; avoids ambiguous short PERSON/LOCATION/acronym cloning)
-3. Resolve deterministic IDs (`IdentityEngine.resolve`) with privacy-preserving options:
-  - `id_salt`: Optional salt to scope entity IDs to a tenant, session, or namespace. Prevents cross-tenant/session linkage of identical entities.
-  - `id_hash_len`: Number of hex digits to use from the hash (default 12; can be increased for more collision resistance).
-  - **Privacy note:** If no salt is provided, IDs are globally stable (legacy behavior), which may allow cross-document or cross-tenant linkage. For privacy-preserving deployments, always set a unique salt per tenant or session.
-4. Persist mapping to `session_store` (`InMemorySessionStore` or `RedisSessionStore`)
-5. Evaluate policy (`PolicyEngine.evaluate`)
-6. Transform text (`transform`)
 ## Session Identity Store
-
-The pipeline's `session_store` persists the `entity_id → metadata` mapping across calls:
-
-```python
-# Default (in-memory, within-process only)
-pipeline = Taivium()
-
-# Redis-backed (cross-call, cross-process)
-from taivium.session_store import RedisSessionStore
-store = RedisSessionStore(session_id="user-abc123", redis_url="redis://localhost:6379")
-pipeline = Taivium(session_store=store)
-
-# Via PrivacyClient
-from taivium import PrivacyClient
-client = PrivacyClient(
-    api_key="sk-...",
-    session_id="user-abc123",
-    redis_url="redis://localhost:6379",
-    redis_ttl=3600,  # seconds; default 86400
-)
-```
 
 The pipeline's `session_store` persists the `entity_id → metadata` mapping across calls. Entity IDs can be scoped for privacy:
 
@@ -189,6 +186,16 @@ pipeline = Taivium(id_salt="tenant_1234", id_hash_len=24)
 from taivium.session_store import RedisSessionStore
 store = RedisSessionStore(session_id="user-abc123", redis_url="redis://localhost:6379")
 pipeline = Taivium(session_store=store)
+
+# Via PrivacyClient
+from taivium import PrivacyClient
+client = PrivacyClient(
+    api_key="sk-...",
+    session_id="user-abc123",
+    redis_url="redis://localhost:6379",
+    redis_ttl=3600,  # seconds; default 86400
+)
+```
 
 # Via PrivacyClient
 from taivium import PrivacyClient
