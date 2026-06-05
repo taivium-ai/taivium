@@ -2,6 +2,7 @@
 This script loads the specified dataset and label profile, runs evaluations using both spaCy and Taivium, and saves the results and error samples. It also computes and prints delta matrices comparing the models'''
 import argparse
 import datetime as dt
+import importlib
 import json
 import os
 import sys
@@ -14,6 +15,26 @@ import tqdm
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+
+# Ensure local src tree is importable before importing evaluation modules.
+SRC_ROOT = os.path.join(PROJECT_ROOT, "src")
+if SRC_ROOT not in sys.path:
+    sys.path.insert(0, SRC_ROOT)
+
+
+def _assert_local_taivium_import() -> None:
+    """Fail fast if taivium resolves outside local src/ tree."""
+    mod = importlib.import_module("taivium")
+    mod_file = Path(getattr(mod, "__file__", "")).resolve()
+    expected_root = (Path(SRC_ROOT) / "taivium").resolve()
+    if expected_root not in mod_file.parents:
+        raise RuntimeError(
+            "main_evaluation.py is not using local source tree. "
+            f"Resolved taivium from: {mod_file}; expected under: {expected_root}"
+        )
+
+
+_assert_local_taivium_import()
 
 from performance_eval.utility import print_delta_matrix_tables, \
                                     save_evaluation_results, save_delta_matrices, \

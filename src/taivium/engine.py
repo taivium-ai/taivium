@@ -249,12 +249,27 @@ STRUCTURED_LOCATION_REGEX = re.compile(
     re.IGNORECASE,
 )
 
-# Usernames: conservative pattern requiring explicit separators with content
-# - Format: [alphanumeric]+separator+[alphanumeric]+ (at least 3 chars each side preferred)
-# - Examples: 'alice_smith', 'john.doe', 'maria-rosaria'
-# Pattern: requires at least one letter/digit, separator, and at least 2 more chars
+# USERNAME patterns
+# 1) Separator format with digit presence (to avoid common hyphenated words):
+#    maria-rosaria.amardi1962, user_123
 USERNAME_REGEX = re.compile(
-    r"\b[a-zA-Z0-9\xC0-\xFF]+[._-][a-zA-Z0-9._\-\xC0-\xFF]{2,}\b"
+    r"\b(?=[a-zA-Z0-9._\-\xC0-\xFF]*\d)"
+    r"[a-zA-Z0-9\xC0-\xFF]+[._-][a-zA-Z0-9._\-\xC0-\xFF]{2,}\b"
+)
+
+# 2) Opaque alphanumeric handles (lowercase-focused to reduce false positives):
+#    paaltwvkjuijwbj957, wsfdkmi9214, lyxmvtinlajlq99997
+USERNAME_OPAQUE_REGEX = re.compile(
+    r"\b(?=[a-z0-9._-]{8,32}\b)(?=[a-z0-9._-]*[a-z])(?=[a-z0-9._-]*\d)"
+    r"[a-z0-9]+(?:[._-][a-z0-9]+)*\b"
+)
+
+# 3) Context-keyed usernames (captures value after username-ish keys):
+#    "username": "R21", participant_id: '10mavus.tancev', caller: ChuWen123
+USERNAME_CONTEXT_REGEX = re.compile(
+    r"(?:\b(?:username|user|participant_id|caller|login(?:_id)?|handle)\b\s*[:=]\s*[\"']?)"
+    r"([a-zA-Z0-9][a-zA-Z0-9._\-]{1,31})",
+    re.IGNORECASE,
 )
 
 # -----------------------------
@@ -506,10 +521,7 @@ def regex_evidence(text: str) -> List[Evidence]:
     """
     Collects high-confidence evidence from regex-based PII/secret patterns.
 
-    Covered patterns: EMAIL, PHONE, API_KEY, IP, DATE, SOCIALNUMBER.
-    
-    Note: USERNAME is excluded from regex detection due to high false positive risk.
-    USERNAME detection relies instead on recurrence patterns (detected when appearing 2+ times).
+    Covered patterns: EMAIL, PHONE, API_KEY, IP, DATE, SOCIALNUMBER, LOCATION, USERNAME.
     """
     evidence: List[Evidence] = []
 
@@ -531,15 +543,74 @@ def regex_evidence(text: str) -> List[Evidence]:
     for m in SOCIALNUMBER_REGEX.finditer(text):
         evidence.append(Evidence(m.start(), m.end(), "SOCIALNUMBER", "regex", 0.93))
 
-    for m in STRUCTURED_LOCATION_REGEX.finditer(text):
-        # The value is in one of three capture groups (JSON, markdown, or XML)
-        grp = next((i for i in (1, 2, 3) if m.group(i) is not None), None)
-        if grp is not None:
-            value = m.group(grp).strip()
-            if value:
-                vs = m.start(grp) + m.group(grp).index(value.lstrip())
-                ve = vs + len(value)
-                evidence.append(Evidence(vs, ve, "LOCATION", "regex", 0.72))
+    _lower_text = text.lower()
+    _location_field_signals = (
+        "city", "state", "country", "street", "building", "postcode",
+        "zipcode", "address", "location",
+    )
+    if any(sig in _lower_text for sig in _location_field_signals):
+        for m in STRUCTURED_LOCATION_REGEX.finditer(text):
+            # The value is in one of three capture groups (JSON, markdown, or XML)
+            grp = next((i for i in (1, 2, 3) if m.group(i) is not None), None)
+            if grp is not None:
+                value = m.group(grp).strip()
+                if value:
+                    vs = m.start(grp) + m.group(grp).index(value.lstrip())
+                    ve = vs + len(value)
+                    evidence.append(Evidence(vs, ve, "LOCATION", "regex", 0.72))
+
+    # USERNAME detection (medium confidence): context-keyed values + opaque handles.
+    # For very long texts, skip username regex scanning for latency safety.
+    _username_context_scan = len(text) <= 1200
+    _username_full_scan = len(text) <= 800
+    _username_seen_spans: set[tuple[int, int]] = set()
+
+    def _skip_username_candidate(candidate: str) -> bool:
+        cand = candidate.strip()
+        low = cand.lower()
+        # Do not steal API keys or API-key field names.
+        if low.startswith("sk-") or low in {"api_key", "api-key", "apikey"}:
+            return True
+        # Exclude placeholder tokens and emails.
+        if "@" in cand or _PLACEHOLDER_RE.match(cand):
+            return True
+        # Exclude all-caps field-like tokens (e.g., API_KEY, USER_NAME).
+        if cand.upper() == cand and not any(ch.isdigit() for ch in cand):
+            return True
+        return False
+
+    def _is_email_local_part(end_idx: int) -> bool:
+        # Matches like "username: localpart@example.com" should remain EMAIL only.
+        return end_idx < len(text) and text[end_idx] == "@"
+
+    if _username_context_scan:
+        for m in USERNAME_CONTEXT_REGEX.finditer(text):
+            candidate = m.group(1)
+            if _skip_username_candidate(candidate) or _is_email_local_part(m.end(1)):
+                continue
+            span = (m.start(1), m.end(1))
+            if span not in _username_seen_spans:
+                _username_seen_spans.add(span)
+                evidence.append(Evidence(span[0], span[1], "USERNAME", "regex", 0.78))
+
+    if _username_full_scan:
+        for m in USERNAME_REGEX.finditer(text):
+            candidate = m.group(0)
+            if _skip_username_candidate(candidate) or _is_email_local_part(m.end()):
+                continue
+            span = (m.start(), m.end())
+            if span not in _username_seen_spans:
+                _username_seen_spans.add(span)
+                evidence.append(Evidence(span[0], span[1], "USERNAME", "regex", 0.70))
+
+        for m in USERNAME_OPAQUE_REGEX.finditer(text):
+            candidate = m.group(0)
+            if _skip_username_candidate(candidate) or _is_email_local_part(m.end()):
+                continue
+            span = (m.start(), m.end())
+            if span not in _username_seen_spans:
+                _username_seen_spans.add(span)
+                evidence.append(Evidence(span[0], span[1], "USERNAME", "regex", 0.68))
 
     return evidence
 
@@ -735,6 +806,93 @@ _PLACEHOLDER_RE = re.compile(
 def _is_placeholder(entity: "Entity") -> bool:
     """Return True if the entity text is a template placeholder, not real PII."""
     return bool(_PLACEHOLDER_RE.match(entity.text.strip()))
+
+
+# -----------------------------
+# Adjacent Same-Label Merger
+# -----------------------------
+
+def _merge_adjacent_same_label_entities(text: str, entities: List[Entity]) -> List[Entity]:
+    """Merge adjacent entities of the same label separated only by whitespace.
+    
+    When two consecutive entities have the same label and are separated
+    only by whitespace (spaces, tabs, newlines), merge them into a single
+    entity spanning both tokens plus the whitespace between them.
+    
+    Examples:
+        - "John" (PERSON) + space + "Smith" (PERSON) → "John Smith" (PERSON)
+        - "user@" (EMAIL) + space + "domain.com" (EMAIL) → "user@ domain.com" (EMAIL)
+    
+    This postprocessing step increases recall for entities that are split
+    across detector boundaries (e.g., multi-token names from spaCy NER).
+    
+    Args:
+        text: The original input text (needed to extract whitespace between spans).
+        entities: Non-overlapping, sorted list of Entity objects.
+    
+    Returns:
+        Merged list of Entity objects with same-label adjacencies collapsed.
+    """
+    if len(entities) <= 1:
+        return entities
+    
+    merged: List[Entity] = []
+    i = 0
+    
+    while i < len(entities):
+        current = entities[i]
+        
+        # Look ahead for adjacent same-label entities
+        j = i + 1
+        last_end = current.end  # Track the end of the last entity in the merge sequence
+        
+        while j < len(entities):
+            next_ent = entities[j]
+            
+            # Must have same label to merge
+            if next_ent.label != current.label:
+                break
+            
+            # Check if separated only by whitespace (from last merged entity to next)
+            gap_text = text[last_end:next_ent.start]
+            if gap_text and gap_text.strip() == "":
+                # Only whitespace between them; can merge
+                j += 1
+                last_end = next_ent.end  # Update last_end for next iteration
+            else:
+                # Gap contains non-whitespace; stop merging
+                break
+        
+        if j > i + 1:
+            # Merged multiple entities: current spans from i to j-1
+            first = entities[i]
+            last = entities[j - 1]
+            merged_text = text[first.start:last.end]
+            
+            # Preserve evidence sources and take average confidence
+            all_evidence_sources = set()
+            total_confidence = 0.0
+            for k in range(i, j):
+                all_evidence_sources.update(entities[k].evidence_sources)
+                total_confidence += entities[k].confidence
+            avg_confidence = total_confidence / (j - i)
+            
+            merged.append(Entity(
+                text=merged_text,
+                label=current.label,
+                start=first.start,
+                end=last.end,
+                source=current.source,
+                evidence_sources=tuple(sorted(all_evidence_sources)),
+                confidence=avg_confidence,
+            ))
+            i = j
+        else:
+            # No merge; keep current entity as-is
+            merged.append(current)
+            i += 1
+    
+    return merged
 
 
 # -----------------------------
@@ -1569,6 +1727,13 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         all_ents = [e for e in all_ents if not _is_placeholder(e)]
         if len(all_ents) < before_filter:
             logger.debug("Filtered %d placeholder entities", before_filter - len(all_ents))
+
+        # Merge adjacent entities of the same label separated only by whitespace.
+        # Example: "John" (PERSON) + space + "Smith" (PERSON) → "John Smith" (PERSON)
+        before_merge = len(all_ents)
+        all_ents = _merge_adjacent_same_label_entities(text, all_ents)
+        if len(all_ents) < before_merge:
+            logger.debug("Merged adjacent same-label entities: %d → %d", before_merge, len(all_ents))
 
         # Hard invariant before identity/policy/transform stages.
         assert_non_overlapping(all_ents)

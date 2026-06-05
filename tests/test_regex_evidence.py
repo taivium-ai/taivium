@@ -1,5 +1,6 @@
 import pytest
 import taivium.engine as eng
+from taivium.engine import Entity
 
 
 def _spans_for_label(evidence, label):
@@ -175,6 +176,274 @@ def test_structured_location_uppercase_json_keys_detected():
     assert "427" in location_texts, "Uppercase JSON 'BUILDING' value should be LOCATION"
     assert "Boltslaw Incline" in location_texts, "Uppercase JSON 'STREET' value should be LOCATION"
     assert "DH8" in location_texts, "Uppercase JSON 'POSTCODE' value should be LOCATION"
+
+
+# ---------------------------------------------------------------------------
+# USERNAME regex coverage (opaque + context keyed)
+# ---------------------------------------------------------------------------
+
+def test_username_opaque_alphanumeric_detected():
+    # Error case: opaque handles missed (e.g., paaltwvkjuijwbj957, wsfdkmi9214)
+    text = "users: paaltwvkjuijwbj957, wsfdkmi9214 and lyxmvtinlajlq99997"
+    evidence = eng.regex_evidence(text)
+    username_texts = [text[e.start:e.end] for e in evidence if e.label == "USERNAME"]
+
+    assert "paaltwvkjuijwbj957" in username_texts
+    assert "wsfdkmi9214" in username_texts
+    assert "lyxmvtinlajlq99997" in username_texts
+
+
+def test_username_context_key_detects_short_code_and_dotted():
+    # Error case: key-based usernames like participant_id and short values (R21) missed
+    text = 'participant_id: "10mavus.tancev"; username: R21; caller: rand.podo'
+    evidence = eng.regex_evidence(text)
+    username_texts = [text[e.start:e.end] for e in evidence if e.label == "USERNAME"]
+
+    assert "10mavus.tancev" in username_texts
+    assert "R21" in username_texts
+    assert "rand.podo" in username_texts
+
+
+def test_username_regex_does_not_capture_email():
+    text = "username: ewgenij.inzollitto22@hotmail.com"
+    evidence = eng.regex_evidence(text)
+    username_texts = [text[e.start:e.end] for e in evidence if e.label == "USERNAME"]
+
+    # Email should be EMAIL, not USERNAME
+    assert not username_texts
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("username: paaltwvkjuijwbj957", "paaltwvkjuijwbj957"),
+        ("login_id=wsfdkmi9214", "wsfdkmi9214"),
+        ("participant_id: 10mavus.tancev", "10mavus.tancev"),
+        ("caller: rand.podo", "rand.podo"),
+        ("handle: maria-rosaria.amardi1962", "maria-rosaria.amardi1962"),
+        ("user: R21", "R21"),
+        ("username: 43CU", "43CU"),
+        ("username: _badprefix", None),
+    ],
+)
+def test_username_context_variants(text, expected):
+    evidence = eng.regex_evidence(text)
+    username_texts = [text[e.start:e.end] for e in evidence if e.label == "USERNAME"]
+
+    if expected is None:
+        assert not username_texts
+    else:
+        assert expected in username_texts
+
+
+@pytest.mark.parametrize(
+    "text,should_match",
+    [
+        ("users: lyxmvtinlajlq99997", True),
+        ("users: ylhhhrmivzz90", True),
+        ("users: gpesrelu34", True),
+        ("users: shari", False),             # too short / no digit
+        ("users: JOHN-DOE", False),          # all-caps field-like / no digit
+        ("users: api_key", False),           # should not be USERNAME
+        ("users: sk-abcdef1234567890", False),
+        ("users: account-name", False),      # no digit in generic hyphen token
+    ],
+)
+def test_username_opaque_and_separator_variants(text, should_match):
+    evidence = eng.regex_evidence(text)
+    username_texts = [text[e.start:e.end] for e in evidence if e.label == "USERNAME"]
+
+    if should_match:
+        assert username_texts, f"Expected USERNAME for: {text!r}"
+    else:
+        assert not username_texts, f"Did not expect USERNAME for: {text!r}"
+
+
+def test_username_deduplicates_overlapping_matches():
+    text = "username: paaltwvkjuijwbj957"
+    evidence = eng.regex_evidence(text)
+    username_texts = [text[e.start:e.end] for e in evidence if e.label == "USERNAME"]
+    # Context + opaque regexes may both see the same token; output should contain one span.
+    assert username_texts.count("paaltwvkjuijwbj957") == 1
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # Standard spacing
+        ('"username": "R21"', "R21"),
+        ("username: R21", "R21"),
+        # No spaces around colon
+        ('"username":"R21"', "R21"),
+        ("username:R21", "R21"),
+        # Extra spaces
+        ('"username" : "R21"', "R21"),
+        ("username : R21", "R21"),
+        ('"username"  :  "R21"', "R21"),
+        ("username  :  R21", "R21"),
+        # Space before colon only
+        ('"username" :"R21"', "R21"),
+        ("username :R21", "R21"),
+        # Space after colon only
+        ('"username": "R21"', "R21"),
+        ("username: R21", "R21"),
+        # Equals sign instead of colon
+        ('"username"="R21"', "R21"),
+        ("username=R21", "R21"),
+        ("username = R21", "R21"),
+        # Mixed quotes and spacing
+        ("'username': 'R21'", "R21"),
+        ("'username': R21", "R21"),
+        ("username: 'R21'", "R21"),
+    ],
+)
+def test_username_context_spacing_variants(text, expected):
+    evidence = eng.regex_evidence(text)
+    username_texts = [text[e.start:e.end] for e in evidence if e.label == "USERNAME"]
+    assert expected in username_texts, f"Expected {expected!r} in {text!r}"
+
+
+# ============================================================
+# Adjacent same-label entity merging tests
+# ============================================================
+
+def test_merge_adjacent_person_entities_with_space():
+    """Test merging two PERSON entities separated by a single space."""
+    text = "John Smith"
+    e1 = Entity(text="John", label="PERSON", start=0, end=4, source="spacy")
+    e2 = Entity(text="Smith", label="PERSON", start=5, end=10, source="spacy")
+    merged = eng._merge_adjacent_same_label_entities(text, [e1, e2])
+    
+    assert len(merged) == 1
+    assert merged[0].text == "John Smith"
+    assert merged[0].start == 0
+    assert merged[0].end == 10
+    assert merged[0].label == "PERSON"
+
+
+def test_merge_adjacent_person_entities_with_multiple_spaces():
+    """Test merging two PERSON entities separated by multiple spaces."""
+    text = "Jane   Doe"
+    e1 = Entity(text="Jane", label="PERSON", start=0, end=4, source="spacy")
+    e2 = Entity(text="Doe", label="PERSON", start=7, end=10, source="spacy")
+    merged = eng._merge_adjacent_same_label_entities(text, [e1, e2])
+    
+    assert len(merged) == 1
+    assert merged[0].text == "Jane   Doe"
+    assert merged[0].start == 0
+    assert merged[0].end == 10
+
+
+def test_merge_adjacent_person_entities_with_tab():
+    """Test merging two PERSON entities separated by a tab."""
+    text = "Alice\tBob"
+    e1 = Entity(text="Alice", label="PERSON", start=0, end=5, source="spacy")
+    e2 = Entity(text="Bob", label="PERSON", start=6, end=9, source="spacy")
+    merged = eng._merge_adjacent_same_label_entities(text, [e1, e2])
+    
+    assert len(merged) == 1
+    assert merged[0].text == "Alice\tBob"
+
+
+def test_merge_adjacent_person_entities_with_newline():
+    """Test merging two PERSON entities separated by a newline."""
+    text = "Charlie\nDiana"
+    e1 = Entity(text="Charlie", label="PERSON", start=0, end=7, source="spacy")
+    e2 = Entity(text="Diana", label="PERSON", start=8, end=13, source="spacy")
+    merged = eng._merge_adjacent_same_label_entities(text, [e1, e2])
+    
+    assert len(merged) == 1
+    assert merged[0].text == "Charlie\nDiana"
+
+
+def test_no_merge_different_labels():
+    """Test that entities with different labels are NOT merged."""
+    text = "John company"
+    e1 = Entity(text="John", label="PERSON", start=0, end=4, source="spacy")
+    e2 = Entity(text="company", label="ORG", start=5, end=12, source="spacy")
+    merged = eng._merge_adjacent_same_label_entities(text, [e1, e2])
+    
+    assert len(merged) == 2
+    assert merged[0].text == "John"
+    assert merged[1].text == "company"
+
+
+def test_no_merge_non_whitespace_gap():
+    """Test that adjacent entities with non-whitespace gap are NOT merged."""
+    text = "John-Smith"
+    e1 = Entity(text="John", label="PERSON", start=0, end=4, source="spacy")
+    e2 = Entity(text="Smith", label="PERSON", start=5, end=10, source="spacy")
+    merged = eng._merge_adjacent_same_label_entities(text, [e1, e2])
+    
+    # The gap contains "-" (non-whitespace), so should NOT merge
+    assert len(merged) == 2
+
+
+def test_merge_three_adjacent_person_entities():
+    """Test merging three consecutive PERSON entities with whitespace."""
+    text = "John Michael Smith"
+    e1 = Entity(text="John", label="PERSON", start=0, end=4, source="spacy")
+    e2 = Entity(text="Michael", label="PERSON", start=5, end=12, source="spacy")
+    e3 = Entity(text="Smith", label="PERSON", start=13, end=18, source="spacy")
+    merged = eng._merge_adjacent_same_label_entities(text, [e1, e2, e3])
+    
+    assert len(merged) == 1
+    assert merged[0].text == "John Michael Smith"
+    assert merged[0].start == 0
+    assert merged[0].end == 18
+
+
+def test_merge_preserves_confidence():
+    """Test that merging entities averages their confidence scores."""
+    text = "Alice Bob"
+    e1 = Entity(text="Alice", label="PERSON", start=0, end=5, source="spacy", confidence=0.8)
+    e2 = Entity(text="Bob", label="PERSON", start=6, end=9, source="spacy", confidence=0.9)
+    merged = eng._merge_adjacent_same_label_entities(text, [e1, e2])
+    
+    assert len(merged) == 1
+    assert merged[0].confidence == pytest.approx(0.85)  # (0.8 + 0.9) / 2
+
+
+def test_merge_preserves_evidence_sources():
+    """Test that merging entities combines evidence sources."""
+    text = "Eve Frank"
+    e1 = Entity(text="Eve", label="PERSON", start=0, end=3, source="spacy", evidence_sources=("spacy",))
+    e2 = Entity(text="Frank", label="PERSON", start=4, end=9, source="spacy", evidence_sources=("gliner",))
+    merged = eng._merge_adjacent_same_label_entities(text, [e1, e2])
+    
+    assert len(merged) == 1
+    assert set(merged[0].evidence_sources) == {"spacy", "gliner"}
+
+
+def test_merge_partial_sequence():
+    """Test merging where only some entities in sequence have same label."""
+    text = "Grace ORG Henry"
+    e1 = Entity(text="Grace", label="PERSON", start=0, end=5, source="spacy")
+    e2 = Entity(text="ORG", label="ORG", start=6, end=9, source="regex")
+    e3 = Entity(text="Henry", label="PERSON", start=10, end=15, source="spacy")
+    merged = eng._merge_adjacent_same_label_entities(text, [e1, e2, e3])
+    
+    # Grace and Henry should NOT merge (ORG in between)
+    assert len(merged) == 3
+    assert merged[0].text == "Grace"
+    assert merged[1].text == "ORG"
+    assert merged[2].text == "Henry"
+
+
+def test_merge_empty_list():
+    """Test that empty entity list returns empty list."""
+    text = "test"
+    merged = eng._merge_adjacent_same_label_entities(text, [])
+    assert merged == []
+
+
+def test_merge_single_entity():
+    """Test that single entity list returns single entity unchanged."""
+    text = "single"
+    e = Entity(text="single", label="PERSON", start=0, end=6, source="spacy")
+    merged = eng._merge_adjacent_same_label_entities(text, [e])
+    assert len(merged) == 1
+    assert merged[0] == e
 
 
 # ---------------------------------------------------------------------------
