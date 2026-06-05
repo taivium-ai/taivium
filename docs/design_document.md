@@ -273,8 +273,76 @@ The function returns a list of `Evidence` objects with `source="org_list"` and `
 
 ---
 
+**Layer 1a: Structured Field Detection (Context-Keyed Entity Values)**
+
+The regex layer includes generalized field detection that extracts sensitive values from structured formats (JSON, YAML, Markdown, XML) based on field key names. This increases recall for values that might otherwise be missed by generic NER patterns.
+
+**Principle:** Only the **VALUE** is labeled with the entity type, not the key. This prevents false positives on field keys themselves (e.g., `"email"` field key is not labeled as EMAIL, only the email value is).
+
+**Supported Formats:**
+
+- JSON/YAML: `"email": "john@example.com"` or `'email': 'john@example.com'`
+- Markdown: `- Email: john@example.com` or `**Email:** john@example.com`
+- XML: `<email>john@example.com</email>`
+
+**Field Key Mapping:**
+
+Maps 50+ field key names to canonical entity labels:
+
+| Label | Mapped Keys | Confidence |
+|-------|------------|------------|
+| `EMAIL` | email, mail, inbox, sender, recipient, from, to, cc, bcc, address | 0.90 |
+| `PHONE` | phone, mobile, cell, telephone, contact, number | 0.80 |
+| `DATE` | date, created, updated, birth_date, dob, issued, expires | 0.75 |
+| `USERNAME` | username, user, participant_id, caller, login, handle | 0.72 |
+| `ORG` | company, organization, employer, organization_name, org | 0.72 |
+| `API_KEY` | api_key, apikey, secret, token, access_key | 0.93 |
+| `IP` | ip, ip_address, host, server, endpoint | 0.88 |
+| `SOCIALNUMBER` | ssn, social_security, sin, nric, id_number, tax_id | 0.85 |
+| `PERSON` | name, first_name, last_name, creator, author, contact_person | 0.72 |
+
+**Validation and Safety:**
+
+- **Deduplication**: Skips spans that have already been detected by higher-confidence detectors or field detection
+- **EMAIL validation for USERNAME**: If a field is labeled as `username` but the value is a valid email, the field is skipped to prevent misclassification
+- **Underscore check**: USERNAME values starting with underscore are filtered to avoid false positives
+- **Boundary checking**: Properly handles whitespace trimming and capture group offset calculation to ensure span accuracy
+
+**Implementation:**
+
+The structured field detector runs as part of `regex_evidence()` after pattern-based detection and scans the text for field key + value combinations using multi-format regex patterns. For each matched field:
+
+1. Extract the value from the appropriate capture group (1 for JSON/YAML, 2 for Markdown, 3 for XML)
+2. Identify the field key and map it to a canonical label via `_FIELD_KEY_LABEL_MAP`
+3. Validate the value is not already detected or is not a false positive
+4. Apply label-specific confidence and emit evidence with `source="regex"`
+
+**Example:**
+
+```python
+text = """
+{
+  "email": "alice@example.com",
+  "phone": "+1-555-1234",
+  "username": "alice_smith",
+  "organization": "Acme Corp"
+}
+"""
+
+# Field detection finds and labels:
+# - "alice@example.com" → EMAIL (confidence 0.90)
+# - "+1-555-1234" → PHONE (confidence 0.80)
+# - "alice_smith" → USERNAME (confidence 0.72)
+# - "Acme Corp" → ORG (confidence 0.72)
+```
+
+**Privacy Note:** Field detection is fully deterministic and rule-based. No ML models or probabilistic classifiers are involved, making it suitable for compliance-sensitive deployments.
+
+---
+
 * Each layer runs independently; failures in one layer do not block others
 * org_list is checked first (Layer 0) as an opt-in compliance feature
+* Structured field detection runs as part of Layer 1 (regex), extracting values from JSON/YAML/Markdown/XML formats
 * Adaptive threshold defaults to 100 characters (`short_text_threshold`)
 * Evidence is merged first, then canonicalized
 * Canonicalization uses a sweep-line overlap-cluster algorithm: overlapping evidence spans are grouped into connected clusters, then each cluster is resolved to one canonical entity via weighted label voting
