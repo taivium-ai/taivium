@@ -251,6 +251,7 @@ def normalize_label(label: str) -> str:
         "LOC": "LOCATION",         # SpaCy Locations -> LOCATION
         "PERSON": "PERSON",
         "ORG": "ORG",
+        "ORGANIZATION": "ORG",     # GLiNER returns ORGANIZATION -> canonical ORG
 
         # --- Your Internal Regex Engine Mappings ---
         "EMAIL_ADDRESS": "EMAIL",  # Ensures internal variations map to 'EMAIL'
@@ -323,22 +324,22 @@ def get_gliner_model():
         return GLiNER.from_pretrained("knowledgator/gliner-pii-small-v1.0")
 
 def gliner_evidence(text: str, targets: Optional[List[str]] = None) -> List[Evidence]:
-    """Collect evidence from GLiNER for PERSON and LOCATION entities.
+    """Collect evidence from GLiNER for PERSON, LOCATION, and ORGANIZATION entities.
 
     GLiNER is optimized for high-precision detection: uses 0.55 threshold to filter
     out uncertain predictions, prioritizing correct detections over recall.
 
     Args:
         text: Input text to analyze.
-        targets: List of entity labels to detect (default: ["PERSON", "LOCATION"]).
+        targets: List of entity labels to detect (default: ["PERSON", "LOCATION", "ORGANIZATION"]).
 
     Returns:
         List of GLiNER-origin `Evidence` records with high-confidence threshold.
     """
     evidence: List[Evidence] = []
 
-    # Use provided targets or default to PERSON and LOCATION
-    target_labels = targets if targets is not None else ["PERSON", "LOCATION"]
+    # Use provided targets or default to PERSON, LOCATION, and ORGANIZATION
+    target_labels = targets if targets is not None else ["PERSON", "LOCATION", "ORGANIZATION"]
     if not target_labels:
         return evidence
 
@@ -432,12 +433,50 @@ def regex_evidence(text: str) -> List[Evidence]:
     return evidence
 
 
+
+def org_list_evidence(text: str, known_orgs: Optional[List[str]] = None) -> List[Evidence]:
+    """Collect evidence for known organizations via fast exact-match lookup.
+
+    Provides rapid detection for organizations in a pre-compiled list,
+    useful for client-specific organization detection with minimal latency.
+    Searches are case-insensitive to match common business name variations.
+
+    Args:
+        text: Input text to analyze.
+        known_orgs: List of organization names to match (case-insensitive).
+                   If None or empty, returns empty evidence list.
+
+    Returns:
+        List of org_list-origin `Evidence` records with high confidence (0.95).
+    """
+    evidence: List[Evidence] = []
+
+    if not known_orgs:
+        return evidence
+
+    for org_name in known_orgs:
+        if not org_name.strip():
+            continue
+        # Use re.escape to handle special regex chars, re.IGNORECASE for case-insensitive
+        pattern = re.escape(org_name.strip())
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            evidence.append(Evidence(
+                start=match.start(),
+                end=match.end(),
+                label="ORG",
+                source="org_list",
+                confidence=0.95,  # Very high confidence for exact matches
+            ))
+
+    return evidence
+
 # -----------------------------
 # Evidence merge and canonicalization
 # -----------------------------
 SOURCE_WEIGHT: Dict[str, float] = {
     "gliner": 1.0,      # Highest weight: GLiNER is most precise for named entities
     "regex": 1.0,       # Regex patterns also very reliable
+    "org_list": 1.0,    # Curated organization list: very high precision for known orgs
     "spacy": 0.5,       # Lower weight: spaCy has lower precision on PERSON/LOCATION
     "transformer": 0.8,
     "llm": 0.6,
@@ -456,16 +495,25 @@ RECURRENCE_ALLOWED = {
 def collect_evidence(  # pylint: disable=too-many-arguments
     text: str,
     *,
+    known_orgs: Optional[List[str]] = None,
     spacy_model_name: str = "en_core_web_sm",
     use_transformer: bool = False,
     use_llm: bool = False,
     transformer_fn: Optional[Callable[[str], List[Evidence]]] = None,
     llm_fn: Optional[Callable[[str], List[Evidence]]] = None,
 ) -> List[Evidence]:
-    """Collects raw evidence from spaCy, regex, and optionally transformer/LLM layers.
+    """Collects raw evidence from known org list, regex, GLiNER, and optional layers.
+
+    Detection order (for compliance-friendly auditing):
+    1. known_orgs: Explicit organization list (if provided) - highest confidence
+    2. regex: Pattern-based PII detection
+    3. GLiNER: ML-based PERSON/LOCATION/ORGANIZATION detection
+    4. transformer/LLM: Optional advanced detectors
 
     Args:
         text: Input text to run detectors over.
+        known_orgs: Optional list of known organization names to match (case-insensitive).
+                   Detected with confidence 0.95 for compliance-friendly auditing.
         spacy_model_name: spaCy model package name for NER.
         use_transformer: Master switch for the transformer detector layer. Must be
             ``True`` for the layer to run. When ``True`` and no *transformer_fn* is
@@ -486,8 +534,12 @@ def collect_evidence(  # pylint: disable=too-many-arguments
     """
     evidence = regex_evidence(text)
 
+    # 0. Fast pre-filtering with known organization list (compliance-friendly)
+    if known_orgs:
+        evidence += org_list_evidence(text, known_orgs)
+
     # 1. Use GLiNER as the default NER layer (higher precision than spaCy)
-    gliner_results = gliner_evidence(text, targets=["PERSON", "LOCATION"])
+    gliner_results = gliner_evidence(text, targets=["PERSON", "LOCATION", "ORGANIZATION"])
     evidence += gliner_results
 
     if use_transformer:
@@ -1268,12 +1320,12 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         self.spacy_model_name = model_name or spacy_model_name
         self.latency_history: List[float] = []  # Stores recent processing latencies in milliseconds
 
-    def process(self, text: str) -> Dict[str, Any]:  # pylint: disable=too-many-locals
+    def process(self, text: str, known_orgs: Optional[List[str]] = None) -> Dict[str, Any]:  # pylint: disable=too-many-locals
         """
         Process text through the privacy pipeline.
 
         Pipeline:
-            Detectors (spaCy/regex/LLM/transformer)
+            Detectors (spaCy/regex/org_list/LLM/transformer)
             -> Evidence
             -> Canonical span resolver
             -> Identity resolver
@@ -1286,6 +1338,9 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         
         Args:
             text (str): The input text to be processed.
+            known_orgs: Optional list of known organization names to match (case-insensitive).
+                       When provided, organizations in this list are detected with high confidence (0.95)
+                       before GLiNER ML detection, enabling compliance-friendly auditable detection.
 
         Returns:
             dict: A dictionary containing the original text, anonymized text,
@@ -1297,6 +1352,7 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         # Step 1: collect raw detector evidence.
         evidence = collect_evidence(
             text,
+            known_orgs=known_orgs,
             spacy_model_name=self.spacy_model_name,
             use_transformer=self.use_transformer,
             use_llm=self.use_llm,
