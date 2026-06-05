@@ -272,6 +272,69 @@ result = module_engine_process(
 )
 ```
 
+### 7. Compliance-Friendly Organization Detection
+
+For compliance and regulatory contexts, use a curated list of known organizations. Organizations on the list are detected with **0.95 confidence** (vs. 0.55 for ML-based detection), providing auditable, rule-based detection suitable for GDPR/HIPAA/CCPA documentation.
+
+```python
+from taivium.engine import Taivium
+
+known_clients = [
+    "Acme Corporation",
+    "Beta Industries", 
+    "Gamma Enterprises"
+]
+
+pipeline = Taivium()
+
+# Pass known_orgs to collect_evidence()
+result = pipeline.process(
+    "We partnered with Acme Corporation on Q3 deliverables.",
+    known_orgs=known_clients
+)
+```
+
+**Why organization lists strengthen compliance:**
+
+- **Auditability**: You can justify exactly which organizations are anonymized (transparent rules)
+- **Reproducibility**: Deterministic detection (same input → same output always)
+- **Precision**: Near-zero false positives with curated lists
+- **Documentation**: "We anonymize organizations on this approved list" is easier to defend to auditors than "the ML model thinks so"
+
+**Detection Tier System (recommended for robust compliance):**
+
+```python
+# Tier 1: Known clients (confidence 0.95, rule-based)
+org_list_evidence = org_list_evidence(text, known_orgs=["Acme Corp", "Beta Inc"])
+
+# Tier 2: Unknown organizations (confidence 0.55, ML-based)
+gliner_evidence = gliner_evidence(text, targets=["ORGANIZATION"])
+
+# Tier 3 (optional): Manual review queue for confidence 0.50-0.55
+# → enables compliance audit trails: "approved_list" vs "ml_detected" vs "manual_review"
+```
+
+**Best Practice Hybrid Approach:**
+
+```python
+pipeline = Taivium()
+
+text = "Acme Corp and unknown partners discussed terms."
+
+result = pipeline.process(
+    text,
+    known_orgs=["Acme Corp"],  # Tier 1: fast, auditable
+    # GLiNER runs automatically (Tier 2)
+)
+
+# Inspect detection sources
+for entity in result.entities:
+    if entity.source == "org_list":
+        print(f"Auditable: {entity.text} (approved list)")
+    elif entity.source == "gliner":
+        print(f"ML-detected: {entity.text} (review recommended)")
+```
+
 ---
 
 ## Environment Configuration

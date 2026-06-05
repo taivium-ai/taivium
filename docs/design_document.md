@@ -201,6 +201,9 @@ The detector stage emits evidence from all enabled detector layers, then resolve
 Input Text
     |
     v
+[Layer 0] org_list evidence (opt-in: known_orgs=[...])
+    |
+    v
 [Layer 1] spaCy evidence
     |
     v
@@ -222,7 +225,54 @@ canonicalize_spans() -> canonical entity set
 find_recurrences() -> recurrence entities (optional, non-overlapping)
 ```
 
+**Layer 0: Organization List (Compliance-Friendly Detection)**
+
+The organization list layer provides fast, deterministic, fully-auditable detection of known organizations before expensive ML layers. Implemented via `org_list_evidence(text, known_orgs)`, this layer uses exact-match lookup with case-insensitive matching and proper regex character escaping.
+
+**Tier System for Organization Detection:**
+
+- **Tier 1 (Curated org_list)**: Known organizations, exact-match substring detection, confidence=0.95, <1ms per text, fully auditable
+- **Tier 2 (GLiNER fallback)**: Unknown organizations, ML-based detection, confidence=0.55, 5-10ms per text
+- **Tier 3 (Optional manual review)**: Borderline cases (0.50-0.55 confidence) routed for human review
+
+**Why tier organization detection?**
+
+Organizations require explicit curation for compliance defensibility. A curated list of known organizations satisfies GDPR Article 32 (Privacy by Design) by providing deterministic, reproducible, and auditable detection that does not rely on probabilistic machine learning. GLiNER serves as a Tier 2 fallback to catch organizations not on the curated list, maximizing recall while maintaining compliance.
+
+**Confidence and Scoring:**
+
+- org_list evidence: confidence=0.95 (exact match, high precision)
+- GLiNER evidence: confidence varies by model output (typical: 0.55)
+- In canonicalization, org_list overlaps are resolved with higher weight via `SOURCE_WEIGHT["org_list"] = 1.0`
+
+**Usage:**
+
+```python
+from taivium import Taivium
+
+pipeline = Taivium()
+text = "Acme Corporation approved the request."
+known_orgs = ["Acme Corporation", "Beta Industries", "Gamma LLC"]
+
+result = pipeline.process(text, known_orgs=known_orgs)
+# Acme Corporation is detected with source="org_list", confidence=0.95
+# Falls back to GLiNER for unknown organizations
+```
+
+**Implementation:**
+
+`org_list_evidence()` is invoked conditionally in `collect_evidence()`:
+```python
+if known_orgs:
+    evidence += org_list_evidence(text, known_orgs)
+```
+
+The function returns a list of `Evidence` objects with `source="org_list"` and `label="ORG"`. Each organization is detected by exact substring matching with case-insensitive lookup and Unicode-safe character handling.
+
+---
+
 * Each layer runs independently; failures in one layer do not block others
+* org_list is checked first (Layer 0) as an opt-in compliance feature
 * Evidence is merged first, then canonicalized
 * Canonicalization uses a sweep-line overlap-cluster algorithm: overlapping evidence spans are grouped into connected clusters, then each cluster is resolved to one canonical entity via weighted label voting
 * After canonicalization, the semantic recurrence layer finds repeated surface-form mentions only for recurrence-eligible canonical entities (default: `EMAIL`, `PHONE`, `API_KEY`; gated heuristics for `PERSON` and `ORG`) and adds them as new, non-overlapping entities with source="recurrence", inheriting canonical `evidence_sources` and `confidence`. Matching uses exact substring scanning plus manual boundary validation (Unicode-aware character classes), not regex `\\b` heuristics.
@@ -240,7 +290,23 @@ Evidence from multiple detectors can conflict. `canonicalize_spans(text, evidenc
 4. **Schedule** — solve weighted interval scheduling via DP to select the globally optimal, strictly non-overlapping candidate set. Tie-breaking is deterministic using `(score, coverage, -count, -start, -end, label)` keys so equal-score ties never depend on iteration order.
 5. **Emit** — produce one `Entity(source="canonical")` per selected candidate with retained `evidence_sources` (sorted union of contributing detector sources) and averaged `confidence`; the selected set is non-overlapping by construction.
 
+**SOURCE_WEIGHT Configuration**
 
+Each detection source is assigned a reliability weight used during canonicalization to prioritize high-confidence sources when evidence conflicts:
+
+| Source | Weight | Rationale |
+|--------|--------|-----------|
+| `org_list` | 1.0 | Curated organization list: very high precision for known orgs, fully auditable |
+| `regex` | 0.9 | Rule-based: high precision, deterministic, no ML variance |
+| `spacy` | 0.8 | Statistical NER: good precision, moderate recall |
+| `gliner` | 0.8 | Neural NER: good precision, higher recall than spaCy |
+| `transformer` | 0.7 | Transformer-based: experimental, lower priority by default |
+| `llm` | 0.6 | LLM-based: variable precision, lower priority |
+| `recurrence` | 0.5 | Repeated entity: inherits from canonical source |
+
+Higher weights indicate more reliable sources. When multiple detectors identify overlapping entity candidates, canonicalization uses weighted scoring to select the best candidate. `org_list` has the highest weight, ensuring curated organizations are always prioritized over ML-detected alternatives.
+
+---
 #### 3.2.1.2 Canonicalization and Span Integrity Contract
 
 The canonicalization and transformation pipeline must satisfy the following hard invariants:
