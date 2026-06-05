@@ -1,8 +1,8 @@
 {
-  "timestamp": "2026-06-05T15:25:55Z",
+  "timestamp": "2026-06-05T16:02:58Z",
   "dataset": "ai4privacy/pii-masking-300k",
   "profile": "privacy",
-  "commit_hash": "408e544a67e3bee60b9a6f1c95b8abe0d87fa2d1",
+  "commit_hash": "a29bf05fc0f43f0b716500e1ec093b09bfe79dad",
   "hardware": {
     "device": "MacBook Pro",
     "chip": "Apple M2 Pro",
@@ -13,7 +13,7 @@
       "precision": 0.6870789696044155,
       "recall": 0.5631840637956506,
       "f1": 0.6189928293697282,
-      "timing_ms": 44.206578737846876
+      "timing_ms": 39.472378432638294
     }
   }
 }
