@@ -170,7 +170,8 @@ IP_REGEX = re.compile(
 DATE_REGEX = re.compile(
     r"\b(?:"
     # Numeric dates: YYYY-MM-DD, MM/DD/YYYY, DD/MM/YYYY, DD.MM.YYYY
-    r"\d{4}[-/]\d{1,2}[-/]\d{1,2}"
+    # Optional ISO 8601 time suffix: T00:00:00 (avoids \b mismatch when T follows digits)
+    r"\d{4}[-/]\d{1,2}[-/]\d{1,2}(?:T\d{2}:\d{2}:\d{2})?"
     r"|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}"
     # Month name + day (with optional ordinal) + optional year: "October 18th, 1980", "June 4", "June/88"
     r"|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?"
@@ -211,7 +212,9 @@ SOCIALNUMBER_REGEX = re.compile(
     # Passport/ID: letters followed by digits (2+ letters, 4+ digits)
     r"|\b[A-Z]{2,5}\d{4,10}\b"
     # Mixed alphanumeric IDs: 6-12 chars with both letters and digits (passports, IDs)
-    r"|\b(?=[A-Z]*\d)[A-Z\d]{6,12}\b"
+    # Requires at least one ACTUAL uppercase letter (case-sensitive via (?-i:)) to avoid
+    # matching all-lowercase username patterns like 'amardi1962' or 'wsfdkmi9214'
+    r"|\b(?=[A-Z\d]*(?-i:[A-Z])[A-Z\d]*\d)[A-Z\d]{6,12}\b"
     # Mixed format: 2-4 letters + 4-8 digits, optionally with separators
     r"|\b[A-Z]{2,4}[\s\-]?\d{4,8}\b"
     # CURP-style with separators: letters + digits + letters + digits
@@ -222,6 +225,28 @@ SOCIALNUMBER_REGEX = re.compile(
     r"|\b\d{3}[\s\-\.]\d{3}[\s\-\.]\d{4}\b"
     r")",
     re.IGNORECASE
+)
+
+# Structured location fields: detects address components specified via JSON, markdown, XML, or CSV.
+# Captures the VALUE from patterns like:
+#   JSON:     "city": "Doncaster"   |  "CITY": "Doncaster"
+#   Markdown: - City: Doncaster     |  **City:** Doncaster
+#   XML:      <city>Doncaster</city>
+# The capture group 1 holds the value span; regex_evidence iterates with .start(1)/.end(1).
+_LOCATION_FIELD_KEYS = (
+    r"country|city|state|street|building|postcode|zipcode|zip_code|"
+    r"zip|address|location|district|region|province|county|suburb|locality"
+)
+STRUCTURED_LOCATION_REGEX = re.compile(
+    r"(?:"
+    # JSON / YAML: "key": "value" or 'key': 'value' (case-insensitive key)
+    r"""(?:["']?)(?:""" + _LOCATION_FIELD_KEYS + r""")(?:["']?)\s*[":]\s*["']([^"'\n,\[\]{}<>]{1,80})["']"""
+    # Markdown / plain text: "- Key: Value" or "**Key:** Value" or "Key: Value"
+    r"""|(?:[-*]\s*)?(?:\*{0,2})(?:""" + _LOCATION_FIELD_KEYS + r""")(?:\*{0,2}):\s*([^\n,\[\]{}<>*|]{1,80})"""
+    # XML tags: <key>Value</key>
+    r"""|<(?:""" + _LOCATION_FIELD_KEYS + r""")>([^<]{1,80})</(?:""" + _LOCATION_FIELD_KEYS + r""")>"""
+    r")",
+    re.IGNORECASE,
 )
 
 # Usernames: conservative pattern requiring explicit separators with content
@@ -506,6 +531,16 @@ def regex_evidence(text: str) -> List[Evidence]:
     for m in SOCIALNUMBER_REGEX.finditer(text):
         evidence.append(Evidence(m.start(), m.end(), "SOCIALNUMBER", "regex", 0.93))
 
+    for m in STRUCTURED_LOCATION_REGEX.finditer(text):
+        # The value is in one of three capture groups (JSON, markdown, or XML)
+        grp = next((i for i in (1, 2, 3) if m.group(i) is not None), None)
+        if grp is not None:
+            value = m.group(grp).strip()
+            if value:
+                vs = m.start(grp) + m.group(grp).index(value.lstrip())
+                ve = vs + len(value)
+                evidence.append(Evidence(vs, ve, "LOCATION", "regex", 0.72))
+
     return evidence
 
 
@@ -683,6 +718,23 @@ def _resolve_short_text_threshold(options: Dict[str, Any]) -> int:
         )
         return DEFAULT_SHORT_TEXT_THRESHOLD
     return _normalize_short_text_threshold(threshold)
+
+
+# -----------------------------
+# Placeholder filter
+# -----------------------------
+
+# Template placeholder patterns that are NOT real PII.
+# Examples: [Your Name], [Your Position], [Name], [Position], [Date], etc.
+_PLACEHOLDER_RE = re.compile(
+    r"^\s*[\[\(<\{]\s*(?:Your\s+)?[A-Za-z][A-Za-z\s]{0,30}\s*[\]\)>\}]\s*$"
+    r"|^LASTNAME\d+_[A-Z]$",
+    re.IGNORECASE,
+)
+
+def _is_placeholder(entity: "Entity") -> bool:
+    """Return True if the entity text is a template placeholder, not real PII."""
+    return bool(_PLACEHOLDER_RE.match(entity.text.strip()))
 
 
 # -----------------------------
@@ -1509,6 +1561,14 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         all_ents = canonicalize_spans(text, all_evidence)
 
         logger.info("Canonicalized entities (with recurrence): %d", len(all_ents))
+
+        # Filter out template placeholders (e.g. [Your Name], [Your Position]).
+        # These are never real PII — they are document template markers that NER
+        # models sometimes misclassify as PERSON/ORG.
+        before_filter = len(all_ents)
+        all_ents = [e for e in all_ents if not _is_placeholder(e)]
+        if len(all_ents) < before_filter:
+            logger.debug("Filtered %d placeholder entities", before_filter - len(all_ents))
 
         # Hard invariant before identity/policy/transform stages.
         assert_non_overlapping(all_ents)
