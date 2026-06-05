@@ -20,12 +20,8 @@ import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
-from functools import lru_cache
 from typing import Any, Callable, cast, Dict, List, Optional, Tuple
-
 import os
-
-import spacy
 
 from .transformer import transformer_evidence
 from .session_store import InMemorySessionStore, SessionStore, RedisSessionStore

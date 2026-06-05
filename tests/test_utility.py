@@ -1,4 +1,8 @@
+'''
+Unit tests for taivium.utility module.'''
+import pytest
 from taivium import engine as eng
+from taivium import utility as utility
 
 # --- GLiNER Model Caching Tests ---
 class TestGetGlinerModel:
@@ -17,3 +21,12 @@ class TestGetGlinerModel:
         model1 = eng.get_gliner_model()
         model2 = eng.get_gliner_model()
         assert model1 is model2
+
+# --- spaCy OSError path (get_spacy_model) ---
+def test_spacy_model_oserror(monkeypatch):
+    def fake_load(*a, **k):
+        raise OSError("model not found")
+    monkeypatch.setattr(utility.spacy, "load", fake_load)
+    with pytest.raises(OSError, match="spaCy model 'en_core_web_sm' not found"):
+        utility.get_spacy_model.cache_clear()
+        utility.get_spacy_model()
