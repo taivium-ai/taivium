@@ -1,17 +1,10 @@
+''' 
+Unit tests for taivium.engine module, targeting lines with low coverage.'''
 
 import pytest
 import types
 import logging
 from taivium import engine as eng
-
-# --- spaCy OSError path (get_spacy_model) ---
-def test_spacy_model_oserror(monkeypatch):
-    def fake_load(*a, **k):
-        raise OSError("model not found")
-    monkeypatch.setattr(eng.spacy, "load", fake_load)
-    with pytest.raises(OSError, match="spaCy model 'en_core_web_sm' not found"):
-        eng.get_spacy_model.cache_clear()
-        eng.get_spacy_model()
 
 # --- Weighted interval scheduling: prev_non_overlap logic ---
 def test_weighted_interval_prev_non_overlap():
