@@ -662,3 +662,134 @@ def test_lastname_marker_filtered_as_placeholder():
     for marker in markers:
         e = Entity(text=marker, label="PERSON", start=0, end=len(marker), source="spacy")
         assert _is_placeholder(e), f"Dataset marker {marker!r} should be filtered"
+
+
+# ==================== Tests for Plain Key: Value Format ====================
+
+
+def test_structured_field_plain_key_value_username():
+    """Test plain key: value format for USERNAME fields."""
+    text = "Username: john123"
+    evidence = eng.regex_evidence(text)
+    
+    username_spans = _spans_for_label(evidence, "USERNAME")
+    assert username_spans, "Expected USERNAME from plain key: value format"
+    assert text[username_spans[0][0]:username_spans[0][1]] == "john123"
+
+
+def test_structured_field_plain_key_value_location():
+    """Test plain key: value format for LOCATION fields."""
+    text = "Place: New York"
+    evidence = eng.regex_evidence(text)
+    
+    location_spans = _spans_for_label(evidence, "LOCATION")
+    assert location_spans, "Expected LOCATION from plain key: value format"
+    assert text[location_spans[0][0]:location_spans[0][1]] == "New York"
+
+
+def test_structured_field_plain_key_value_email():
+    """Test plain key: value format for EMAIL fields."""
+    text = "Email: test@example.com"
+    evidence = eng.regex_evidence(text)
+    
+    email_spans = _spans_for_label(evidence, "EMAIL")
+    assert email_spans, "Expected EMAIL from plain key: value format"
+    assert text[email_spans[0][0]:email_spans[0][1]] == "test@example.com"
+
+
+def test_structured_field_plain_key_value_phone():
+    """Test plain key: value format for PHONE fields."""
+    text = "Phone: 555-123-4567"
+    evidence = eng.regex_evidence(text)
+    
+    phone_spans = _spans_for_label(evidence, "PHONE")
+    assert phone_spans, "Expected PHONE from plain key: value format"
+    assert text[phone_spans[0][0]:phone_spans[0][1]] == "555-123-4567"
+
+
+def test_structured_field_plain_key_value_date():
+    """Test plain key: value format for DATE fields."""
+    text = "Date: 2024-06-05"
+    evidence = eng.regex_evidence(text)
+    
+    date_spans = _spans_for_label(evidence, "DATE")
+    assert date_spans, "Expected DATE from plain key: value format"
+    assert text[date_spans[0][0]:date_spans[0][1]] == "2024-06-05"
+
+
+def test_structured_field_plain_key_value_api_key():
+    """Test plain key: value format for API_KEY fields."""
+    text = "API_KEY: sk-abc123def456"
+    evidence = eng.regex_evidence(text)
+    
+    api_key_spans = _spans_for_label(evidence, "API_KEY")
+    assert api_key_spans, "Expected API_KEY from plain key: value format"
+    # Check that the actual API key value is detected
+    api_key_texts = [text[s:e] for s, e, _ in api_key_spans]
+    assert "sk-abc123def456" in api_key_texts, f"Expected API key value in {api_key_texts}"
+
+
+def test_structured_field_plain_key_value_api_key2():
+    """Test plain key: value format for API_KEY fields."""
+    text = "APIKEY: sk-abc123def456"
+    evidence = eng.regex_evidence(text)
+    
+    api_key_spans = _spans_for_label(evidence, "API_KEY")
+    assert api_key_spans, "Expected API_KEY from plain key: value format"
+    # Check that at least one match is the actual API key (not the field key)
+    api_key_texts = [text[s:e] for s, e, _ in api_key_spans]
+    assert "sk-abc123def456" in api_key_texts, f"Expected full API key in {api_key_texts}"
+
+
+def test_structured_field_plain_key_value_ip():
+    """Test plain key: value format for IP fields."""
+    text = "IP: 192.168.1.1"
+    evidence = eng.regex_evidence(text)
+    
+    ip_spans = _spans_for_label(evidence, "IP")
+    assert ip_spans, "Expected IP from plain key: value format"
+    assert text[ip_spans[0][0]:ip_spans[0][1]] == "192.168.1.1"
+
+
+def test_structured_field_plain_key_value_socialnumber():
+    """Test plain key: value format for SOCIALNUMBER fields."""
+    text = "Passport: A123456789"
+    evidence = eng.regex_evidence(text)
+    
+    ssn_spans = _spans_for_label(evidence, "SOCIALNUMBER")
+    assert ssn_spans, "Expected SOCIALNUMBER from plain key: value format"
+    assert text[ssn_spans[0][0]:ssn_spans[0][1]] == "A123456789"
+
+
+def test_structured_field_plain_key_value_case_insensitive():
+    """Test plain key: value format is case-insensitive."""
+    text = "USERNAME: alice42"
+    evidence = eng.regex_evidence(text)
+    
+    username_spans = _spans_for_label(evidence, "USERNAME")
+    assert username_spans, "Expected USERNAME with uppercase key"
+    assert text[username_spans[0][0]:username_spans[0][1]] == "alice42"
+
+
+def test_structured_field_plain_key_value_mixed_case():
+    """Test plain key: value format with mixed case field names."""
+    text = "FirstName: John"
+    evidence = eng.regex_evidence(text)
+    
+    person_spans = _spans_for_label(evidence, "PERSON")
+    assert person_spans, "Expected PERSON from FirstName key"
+    assert text[person_spans[0][0]:person_spans[0][1]] == "John"
+
+
+def test_structured_field_plain_key_value_multiple_fields():
+    """Test multiple plain key: value fields in same text."""
+    text = "Username: bob99\nEmail: bob@company.com\nLocation: Boston"
+    evidence = eng.regex_evidence(text)
+    
+    username_spans = _spans_for_label(evidence, "USERNAME")
+    email_spans = _spans_for_label(evidence, "EMAIL")
+    location_spans = _spans_for_label(evidence, "LOCATION")
+    
+    assert len(username_spans) >= 1, "Expected USERNAME"
+    assert len(email_spans) >= 1, "Expected EMAIL"
+    assert len(location_spans) >= 1, "Expected LOCATION"

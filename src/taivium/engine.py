@@ -247,6 +247,7 @@ STRUCTURED_LOCATION_REGEX = re.compile(
      r"""(?:\*{0,2}):\s*([^\n,\[\]{}<>*|]{1,80})"""
      r"""|<(?:""" + _LOCATION_FIELD_KEYS + r""")>([^<]{1,80})</(?:"""
      + _LOCATION_FIELD_KEYS + r""")>"""
+     r"""|(?:""" + _LOCATION_FIELD_KEYS + r"""):\s*([^\n,\[\]{}<>*|]{1,80})"""
      r")"
     ),
     re.IGNORECASE,
@@ -274,6 +275,7 @@ _FIELD_KEY_LABEL_MAP = {
     # LOCATION fields
     "LOCATION": "LOCATION",
     "LOC": "LOCATION",
+    "PLACE": "LOCATION",
     "CITY": "LOCATION",
     "STATE": "LOCATION",
     "COUNTRY": "LOCATION",
@@ -311,12 +313,13 @@ _FIELD_KEY_LABEL_MAP = {
     "US_SSN": "SOCIALNUMBER",
     "CREDIT_CARD": "SOCIALNUMBER",
     "CRYPTO": "SOCIALNUMBER",
+    "CASE_NUMBER": "SOCIALNUMBER",
     # USERNAME fields
     "USERNAME": "USERNAME",
     # Additional field aliases
     "GEOCOORD": "LOCATION",
     "TITLE": "PERSON",
-    "SEX": "PERSON",
+    "PARTICIPANT": "PERSON",
 }
 
 # Build regex for all field keys except those already in STRUCTURED_LOCATION_REGEX
@@ -338,6 +341,7 @@ STRUCTURED_FIELD_REGEX = re.compile(
      r"""(?:\*{0,2}):\s*([^\n,\[\]{}<>*|]{1,80})"""
      r"""|<(?:""" + _ALL_FIELD_KEYS_EXCEPT_LOC + r""")>([^<]{1,80})</(?:"""
      + _ALL_FIELD_KEYS_EXCEPT_LOC + r""")>"""
+     r"""|(?:""" + _ALL_FIELD_KEYS_EXCEPT_LOC + r"""):\s*([^\n,\[\]{}<>*|]{1,80})"""
      r")"
     ),
     re.IGNORECASE,
@@ -683,8 +687,8 @@ def regex_evidence(text: str) -> List[Evidence]:
     )
     if any(sig in _lower_text for sig in _location_field_signals):
         for m in STRUCTURED_LOCATION_REGEX.finditer(text):
-            # The value is in one of three capture groups (JSON, markdown, or XML)
-            grp = next((i for i in (1, 2, 3) if m.group(i) is not None), None)
+            # The value is in one of four capture groups (JSON, markdown, XML, or plain key:value)
+            grp = next((i for i in (1, 2, 3, 4) if m.group(i) is not None), None)
             if grp is not None:
                 value = m.group(grp).strip()
                 if value:
@@ -764,7 +768,7 @@ def regex_evidence(text: str) -> List[Evidence]:
         return False
 
     for m in STRUCTURED_FIELD_REGEX.finditer(text):
-        grp = next((i for i in (1, 2, 3) if m.group(i) is not None), None)
+        grp = next((i for i in (1, 2, 3, 4) if m.group(i) is not None), None)
         if grp is None:
             continue
 
