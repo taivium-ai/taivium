@@ -26,14 +26,12 @@ from typing import Any, Callable, cast, Dict, List, Optional, Tuple
 import os
 
 import spacy
-from huggingface_hub import snapshot_download
-from gliner import GLiNER
-import onnxruntime as rt
 
 from .transformer import transformer_evidence
 from .session_store import InMemorySessionStore, SessionStore, RedisSessionStore
 from .llm import llm_evidence
 from .audit_logger import log_audit_event
+from .utility import get_gliner_model
 
 logger = logging.getLogger("taivium.engine")
 
@@ -441,101 +439,6 @@ def normalize_label(label: str) -> str:
 # Evidence detectors
 # -----------------------------
 
-@lru_cache(maxsize=1)
-def get_gliner_model():
-    """Lazy-load and cache GLiNER ONNX quantized model for 5-10x speedup.
-
-    Uses the ONNX-quantized model from onnx-community/gliner_small-v2.1 to achieve
-    significantly faster inference (5-10x) compared to full transformer weights.
-
-    On M2/M3, prefers CoreML provider (GPU + Neural Engine).
-    Falls back to CUDA on NVIDIA, then CPU.
-
-    Returns:
-        Loaded GLiNER model instance with ONNX quantization enabled.
-    """
-    try:
-        # 1. Detect available ONNX execution providers
-        try:
-            available_providers = rt.get_available_providers()
-            logger.info("Available ONNX providers: %s", available_providers)
-        except ImportError:
-            available_providers = ["CPUExecutionProvider"]
-            logger.warning("onnxruntime not installed, using CPU only")
-
-        # 2. Configure preferred provider order: CoreML → CUDA → CPU
-        preferred_providers = []
-        if "CoreMLExecutionProvider" in available_providers:
-            preferred_providers.append("CoreMLExecutionProvider")
-            logger.info(
-                "CoreML provider available (M2/M3 GPU acceleration)"
-            )
-        if "CUDAExecutionProvider" in available_providers:
-            preferred_providers.append("CUDAExecutionProvider")
-            logger.info(
-                "CUDA provider available (NVIDIA GPU acceleration)"
-            )
-        if "CPUExecutionProvider" in available_providers:
-            preferred_providers.append("CPUExecutionProvider")
-
-        selected_provider = (
-            preferred_providers[0]
-            if preferred_providers
-            else "CPUExecutionProvider"
-        )
-        logger.info("Selected ONNX provider: %s", selected_provider)
-
-        # 3. Download the ONNX model repository from HuggingFace Hub
-        repo_id = "onnx-community/gliner_small-v2.1"
-        logger.info("Downloading ONNX GLiNER model from %s", repo_id)
-        local_dir = snapshot_download(repo_id=repo_id)
-
-        # 4. Path to the quantized ONNX weights file
-        onnx_model_file = os.path.join("onnx", "model_quantized.onnx")
-
-        logger.info(
-            "Loading GLiNER from %s with ONNX quantization on %s",
-            local_dir,
-            selected_provider,
-        )
-
-        # 5. Load GLiNER with explicit provider configuration
-        model = GLiNER.from_pretrained(
-            local_dir,
-            load_onnx_model=True,
-            load_tokenizer=True,
-            onnx_model_file=onnx_model_file,
-            trust_remote_code=True,
-            providers=preferred_providers  # Use preferred provider order
-        )
-
-        # 6. Verify actual provider in use (critical for confirming GPU acceleration)
-        actual_provider = _verify_onnx_provider(model)
-        logger.info(
-            "ONNX GLiNER loaded successfully on %s (5-10x faster inference)",
-            actual_provider,
-        )
-
-        if actual_provider != selected_provider:
-            logger.warning(
-                "Provider mismatch: requested %s, but using %s. "
-                "This may indicate GPU unavailability.",
-                selected_provider,
-                actual_provider,
-            )
-
-        return model
-
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        # Fallback to standard transformer weights if ONNX fails
-        logger.warning(
-            "ONNX GLiNER load failed (%s), falling back to standard weights. "
-            "Inference will be slower. Install onnxruntime for speedup: "
-            "pip install onnxruntime",
-            e,
-        )
-        return GLiNER.from_pretrained("knowledgator/gliner-pii-small-v1.0")
-
 def gliner_evidence(text: str, targets: Optional[List[str]] = None) -> List[Evidence]:
     """Collect evidence from GLiNER for PERSON, LOCATION, and ORGANIZATION entities.
 
@@ -583,44 +486,6 @@ def gliner_evidence(text: str, targets: Optional[List[str]] = None) -> List[Evid
 # TIME, MONEY, etc.) from generating false positives.
 # ORG is kept because the library contract requires it (policy engine tests expect ORG).
 _SPACY_NER_LABELS = {"PERSON", "LOCATION", "ORG"}
-
-
-def _verify_onnx_provider(model: Any) -> str:  # pylint: disable=unused-argument
-    """Verify which ONNX execution provider is actually in use.
-
-    Introspects the loaded GLiNER model to determine which execution provider
-    ONNX Runtime is actually using for inference. This confirms GPU acceleration
-    is active if requested.
-
-    Since GLiNER doesn't expose the session directly, we use ONNX Runtime's
-    environment to check which providers were loaded. The provider preference
-    list is passed to GLiNER.from_pretrained(), so ONNX Runtime selects the
-    first available provider from that list.
-
-    Args:
-        model: Loaded GLiNER model instance.
-
-    Returns:
-        String name of the likely active ONNX execution provider.
-    """
-    try:
-
-        # Check all providers that ONNX Runtime has available
-        available = rt.get_available_providers()
-        logger.debug("ONNX Runtime available providers: %s", available)
-
-        # ONNX Runtime selects the first available provider from the preference list
-        # We passed: ["CoreMLExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"]
-        # So it will use the first one that's available
-        if "CoreMLExecutionProvider" in available:
-            return "CoreMLExecutionProvider"
-        if "CUDAExecutionProvider" in available:
-            return "CUDAExecutionProvider"
-        return "CPUExecutionProvider"
-
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.warning("Failed to verify ONNX provider: %s", e)
-        return "CPUExecutionProvider (fallback)"
 
 
 def spacy_evidence(text: str, model_name: str = "en_core_web_sm") -> List[Evidence]:
