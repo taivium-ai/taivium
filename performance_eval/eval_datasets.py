@@ -115,6 +115,30 @@ PRIVACY_LABEL_MAP = {
 }
 
 
+# Annotation-noise tokens that should not be scored as PERSON in evaluation.
+# These values encode demographic fields (sex/gender) rather than identities.
+_GENDER_PERSON_NOISE = {
+    "m",
+    "f",
+    "o",
+    "male",
+    "female",
+    "femle",
+    "prefer not to disclose",
+    "not specified",
+    "not disclosed",
+    "unknown",
+}
+
+
+def _is_person_gender_noise(mapped_label: str, text: str, start: int, end: int) -> bool:
+    """Return True when a PERSON span is actually a gender/demographic token."""
+    if mapped_label != "PERSON":
+        return False
+    value = text[start:end].strip().lower()
+    return value in _GENDER_PERSON_NOISE
+
+
 def _map_raw_label(raw_label: str) -> str:
     """Map heterogeneous dataset labels to the project label schema."""
     value = str(raw_label).strip().upper()
@@ -189,6 +213,8 @@ def _load_span_style_split(ds_split, allowed_labels):
         for start, end, raw_label in spans:
             mapped = _map_raw_label(raw_label)
             if mapped in allowed_labels and 0 <= start < end <= len(text):
+                if _is_person_gender_noise(mapped, text, start, end):
+                    continue
                 comparable_gold.add((start, end, mapped))
         comparable_golds.append((text, comparable_gold))
     return comparable_golds
