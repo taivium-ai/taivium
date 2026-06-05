@@ -6,3 +6,4 @@ pytest-watch==4.2.0
 pylint==3.0.0
 # Redis test double (no real Redis server needed in tests)
 fakeredis>=2.0.0
+matplotlib>=3.0.0
