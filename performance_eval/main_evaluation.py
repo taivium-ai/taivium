@@ -114,7 +114,7 @@ def main() -> None:
     parser.add_argument(
         "--workers",
         type=int,
-        default=1,#max(1, (os.cpu_count() or 2) - 1),
+        default=1,#max(1, (os.cpu_count() or 2) - 1), # For mac os using onnx runtime using gpu
         help="Number of worker processes for evaluation. Use 1 to disable multiprocessing.",
     )
     parser.add_argument(
