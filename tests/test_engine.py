@@ -547,3 +547,280 @@ class TestGlinerEvidence:
             assert 0 <= ev.start < ev.end <= len(text)
             extracted = text[ev.start:ev.end]
             assert len(extracted) > 0
+
+    def test_predict_gliner_chunks_inference_fallback(self, monkeypatch):
+        """_predict_gliner_chunks should fall back when inference fails."""
+        def failing_inference(*args, **kwargs):
+            raise RuntimeError("Inference failed")
+        
+        def working_batch_predict(texts, labels, **kwargs):
+            return [[{"start": 0, "end": 3, "label": "PERSON", "score": 0.9}] for _ in texts]
+        
+        mock_model = types.SimpleNamespace(
+            inference=failing_inference,
+            batch_predict_entities=working_batch_predict,
+        )
+        
+        chunks = [(0, "chunk1"), (10, "chunk2")]
+        result = eng._predict_gliner_chunks(mock_model, chunks, ["PERSON"], 0.55)
+        
+        assert len(result) == 2
+        assert all(len(preds) == 1 for preds in result)
+
+    def test_predict_gliner_chunks_batch_fallback(self, monkeypatch):
+        """_predict_gliner_chunks should fall back to per-chunk when batch fails."""
+        def failing_batch(*args, **kwargs):
+            raise RuntimeError("Batch failed")
+        
+        def working_predict(text, labels, **kwargs):
+            return [{"start": 0, "end": 3, "label": "PERSON", "score": 0.9}]
+        
+        mock_model = types.SimpleNamespace(
+            inference=None,
+            batch_predict_entities=failing_batch,
+            predict_entities=working_predict,
+        )
+        
+        chunks = [(0, "chunk1"), (10, "chunk2")]
+        result = eng._predict_gliner_chunks(mock_model, chunks, ["PERSON"], 0.55)
+        
+        assert len(result) == 2
+        assert all(len(preds) == 1 for preds in result)
+
+    def test_predict_gliner_chunks_shape_mismatch_inference(self, monkeypatch, caplog):
+        """_predict_gliner_chunks should fall back when inference shape mismatches."""
+        def mismatch_inference(texts, labels, **kwargs):
+            return [[{"start": 0, "end": 3, "label": "PERSON", "score": 0.9}]]  # Only 1 instead of N
+        
+        def working_batch(texts, labels, **kwargs):
+            return [[{"start": 0, "end": 3, "label": "PERSON", "score": 0.9}] for _ in texts]
+        
+        mock_model = types.SimpleNamespace(
+            inference=mismatch_inference,
+            batch_predict_entities=working_batch,
+        )
+        
+        with caplog.at_level(logging.DEBUG, logger="taivium.engine"):
+            chunks = [(0, "chunk1"), (10, "chunk2")]
+            result = eng._predict_gliner_chunks(mock_model, chunks, ["PERSON"], 0.55)
+        
+        assert len(result) == 2
+        assert any("unavailable" in msg for msg in caplog.messages)
+
+    def test_predict_gliner_chunks_shape_mismatch_batch(self, monkeypatch, caplog):
+        """_predict_gliner_chunks should fall back when batch predict shape mismatches."""
+        def mismatch_batch(texts, labels, **kwargs):
+            return [[{"start": 0, "end": 3, "label": "PERSON", "score": 0.9}]]  # Only 1 instead of N
+        
+        def working_predict(text, labels, **kwargs):
+            return [{"start": 0, "end": 3, "label": "PERSON", "score": 0.9}]
+        
+        mock_model = types.SimpleNamespace(
+            inference=None,
+            batch_predict_entities=mismatch_batch,
+            predict_entities=working_predict,
+        )
+        
+        with caplog.at_level(logging.DEBUG, logger="taivium.engine"):
+            chunks = [(0, "chunk1"), (10, "chunk2")]
+            result = eng._predict_gliner_chunks(mock_model, chunks, ["PERSON"], 0.55)
+        
+        assert len(result) == 2
+        assert any("unavailable" in msg for msg in caplog.messages)
+
+    def test_chunk_text_for_gliner_empty_text(self):
+        """_chunk_text_for_gliner should handle empty text."""
+        chunks = eng._chunk_text_for_gliner("")
+        assert chunks == []
+
+    def test_chunk_text_for_gliner_no_tokens(self):
+        """_chunk_text_for_gliner should handle text with no tokens (only whitespace)."""
+        chunks = eng._chunk_text_for_gliner("   \n  \t  ")
+        assert len(chunks) <= 1
+
+    def test_gliner_evidence_with_empty_targets(self):
+        """gliner_evidence should return empty list for empty targets."""
+        result = eng.gliner_evidence("John Smith lives in NYC", targets=[])
+        assert result == []
+
+    def test_gliner_evidence_with_none_targets(self):
+        """gliner_evidence should use default targets when None is passed."""
+        result = eng.gliner_evidence("John Smith", targets=None)
+        assert isinstance(result, list)
+
+    def test_gliner_evidence_model_exception(self, monkeypatch, caplog):
+        """gliner_evidence should handle model exceptions gracefully."""
+        def failing_get_model():
+            raise RuntimeError("Model loading failed")
+        
+        monkeypatch.setattr(eng, "get_gliner_model", failing_get_model)
+        
+        with caplog.at_level(logging.WARNING, logger="taivium.engine"):
+            result = eng.gliner_evidence("John Smith")
+        
+        assert result == []
+        assert any("GLiNER detection failed" in msg for msg in caplog.messages)
+
+    def test_gliner_evidence_deduplication(self, monkeypatch):
+        """gliner_evidence should deduplicate overlapping predictions."""
+        def fake_predict(text, labels, **kwargs):
+            # Return duplicate spans (same start/end/label)
+            return [
+                {"start": 0, "end": 4, "label": "PERSON", "score": 0.9},
+                {"start": 0, "end": 4, "label": "PERSON", "score": 0.85},  # Duplicate
+            ]
+        
+        mock_model = types.SimpleNamespace(predict_entities=fake_predict)
+        monkeypatch.setattr(eng, "get_gliner_model", lambda: mock_model)
+        
+        result = eng.gliner_evidence("John Smith")
+        
+        # Should only have 1 evidence, not 2 (deduplication)
+        assert len(result) == 1
+
+    def test_gliner_evidence_label_normalization(self, monkeypatch):
+        """gliner_evidence should normalize labels correctly."""
+        def fake_predict(text, labels, **kwargs):
+            return [
+                {"start": 0, "end": 4, "label": "PERSON", "score": 0.9},
+                {"start": 5, "end": 10, "label": "ORG", "score": 0.85},
+            ]
+        
+        mock_model = types.SimpleNamespace(predict_entities=fake_predict)
+        monkeypatch.setattr(eng, "get_gliner_model", lambda: mock_model)
+        
+        result = eng.gliner_evidence("John Smith Company")
+        
+        assert len(result) == 2
+        assert all(ev.label in ["PERSON", "ORG"] for ev in result)
+
+    def test_chunk_text_for_gliner_complex_overlap(self):
+        """_chunk_text_for_gliner should maintain proper overlap for complex texts."""
+        # Create text with exactly 2 * (384 - 32) + 32 tokens (1440)
+        token_count = 1440
+        text = " ".join(f"tok{i}" for i in range(token_count))
+        
+        chunks = eng._chunk_text_for_gliner(text)
+        
+        # Verify overlap between consecutive chunks
+        for i in range(len(chunks) - 1):
+            left_end = chunks[i][1]
+            right_start = chunks[i + 1][1]
+            # Extract last tokens from left chunk
+            left_tokens = left_end.split()
+            right_tokens = right_start.split()
+            # First part of right chunk should overlap with end of left chunk
+            assert len(left_tokens) > 0
+            assert len(right_tokens) > 0
+
+    def test_predict_gliner_chunks_per_chunk_fallback(self, monkeypatch):
+        """_predict_gliner_chunks should fall through to per-chunk mode when APIs unavailable."""
+        def working_predict(text, labels, **kwargs):
+            return [{"start": 0, "end": 4, "label": "PERSON", "score": 0.9}]
+        
+        mock_model = types.SimpleNamespace(
+            predict_entities=working_predict,
+            # No inference or batch_predict methods (they don't exist)
+        )
+        
+        chunks = [(0, "text1"), (10, "text2"), (20, "text3")]
+        result = eng._predict_gliner_chunks(mock_model, chunks, ["PERSON"], 0.55)
+        
+        # Should process 3 chunks, 1 prediction each
+        assert len(result) == 3
+        assert all(len(preds) == 1 for preds in result)
+
+    def test_gliner_evidence_unknown_label_filtering(self, monkeypatch):
+        """gliner_evidence should skip predictions with UNKNOWN labels."""
+        def fake_predict(text, labels, **kwargs):
+            return [
+                {"start": 0, "end": 4, "label": "UNKNOWN", "score": 0.9},  # Will be filtered
+                {"start": 5, "end": 10, "label": "PERSON", "score": 0.85},  # Will be kept
+            ]
+        
+        mock_model = types.SimpleNamespace(predict_entities=fake_predict)
+        monkeypatch.setattr(eng, "get_gliner_model", lambda: mock_model)
+        
+        result = eng.gliner_evidence("John Smith")
+        
+        # Should only have 1 evidence (UNKNOWN filtered out)
+        assert len(result) == 1
+        assert result[0].label == "PERSON"
+
+    def test_gliner_evidence_offset_remapping_multi_chunk(self, monkeypatch):
+        """gliner_evidence should correctly remap offsets from multiple chunks."""
+        def fake_predict(text, labels, **kwargs):
+            if "chunk1" in text:
+                return [{"start": 0, "end": 2, "label": "PERSON", "score": 0.9}]
+            elif "chunk2" in text:
+                return [{"start": 3, "end": 6, "label": "LOCATION", "score": 0.85}]
+            else:
+                return []
+        
+        mock_model = types.SimpleNamespace(predict_entities=fake_predict)
+        monkeypatch.setattr(eng, "get_gliner_model", lambda: mock_model)
+        
+        # Mock chunking to return specific chunks with offsets
+        def fake_chunk(text):
+            return [(0, "chunk1"), (50, "chunk2")]
+        
+        monkeypatch.setattr(eng, "_chunk_text_for_gliner", fake_chunk)
+        
+        result = eng.gliner_evidence("dummy text")
+        
+        # Check that offsets are correctly remapped
+        assert len(result) == 2
+        assert result[0].start == 0  # chunk_offset 0 + local 0
+        assert result[1].start == 53  # chunk_offset 50 + local 3
+
+    def test_predict_gliner_chunks_all_apis_missing(self, monkeypatch):
+        """_predict_gliner_chunks should gracefully handle model with no inference APIs."""
+        mock_model = types.SimpleNamespace()  # No methods at all
+        
+        chunks = [(0, "text")]
+        
+        # This should raise an AttributeError since predict_entities doesn't exist either
+        with pytest.raises(AttributeError):
+            eng._predict_gliner_chunks(mock_model, chunks, ["PERSON"], 0.55)
+
+    def test_gliner_evidence_empty_predictions(self, monkeypatch):
+        """gliner_evidence should handle chunks with empty prediction lists."""
+        def fake_predict(text, labels, **kwargs):
+            return []  # No predictions
+        
+        mock_model = types.SimpleNamespace(predict_entities=fake_predict)
+        monkeypatch.setattr(eng, "get_gliner_model", lambda: mock_model)
+        
+        result = eng.gliner_evidence("some text")
+        
+        assert result == []
+
+    def test_gliner_evidence_multiple_spans_same_location(self, monkeypatch):
+        """gliner_evidence should handle overlapping predictions at same location."""
+        def fake_predict(text, labels, **kwargs):
+            return [
+                {"start": 0, "end": 4, "label": "PERSON", "score": 0.95},
+                {"start": 0, "end": 4, "label": "PERSON", "score": 0.92},  # Dup
+                {"start": 0, "end": 4, "label": "ORG", "score": 0.88},  # Different label
+            ]
+        
+        mock_model = types.SimpleNamespace(predict_entities=fake_predict)
+        monkeypatch.setattr(eng, "get_gliner_model", lambda: mock_model)
+        
+        result = eng.gliner_evidence("text")
+        
+        # Should have 2 unique entries (same span+label deduped, but different label kept)
+        assert len(result) == 2
+
+    def test_gliner_evidence_special_characters(self, monkeypatch):
+        """gliner_evidence should handle text with special characters."""
+        def fake_predict(text, labels, **kwargs):
+            return [{"start": 0, "end": 5, "label": "PERSON", "score": 0.9}]
+        
+        mock_model = types.SimpleNamespace(predict_entities=fake_predict)
+        monkeypatch.setattr(eng, "get_gliner_model", lambda: mock_model)
+        
+        result = eng.gliner_evidence("Jöhn @#$% Smith")
+        
+        assert len(result) == 1
+        assert result[0].source == "gliner"
