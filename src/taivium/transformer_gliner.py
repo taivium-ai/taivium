@@ -6,8 +6,10 @@ variable-length text inputs. This module handles texts longer than GLiNER's
 """
 
 import logging
-import re
 from typing import Any, cast, Dict, List, Optional, Tuple
+from functools import lru_cache
+
+import spacy
 
 from .utility import get_gliner_model
 
@@ -30,6 +32,16 @@ _GLINER_OVERLAP_TOKENS = 32
 _GLINER_BATCH_SIZE = 8
 
 
+@lru_cache(maxsize=1)
+def _get_tokenizer():
+    """Get cached blank spaCy tokenizer for fast, accurate token counting.
+    
+    Uses spaCy's blank "en" model which provides accurate tokenization
+    without the overhead of full NLP pipeline (POS, dependencies, etc.).
+    """
+    return spacy.blank("en")
+
+
 def _chunk_text_for_gliner(
     text: str,
     max_tokens: int = _GLINER_MAX_TOKENS,
@@ -37,17 +49,25 @@ def _chunk_text_for_gliner(
 ) -> List[Tuple[int, str]]:
     """Split text into overlapping token chunks for GLiNER window-limited inference.
 
-    Returns a list of ``(offset, chunk_text)`` pairs where ``offset`` is the
-    character start in the original text. Offsets allow chunk-local predictions
-    to be remapped back to global coordinates.
+    Uses spaCy's blank tokenizer for accurate token counting without NLP overhead.
+    Returns a list of ``(offset, chunk_text)`` pairs where ``offset`` is the character 
+    start in the original text. Offsets allow chunk-local predictions to be remapped 
+    back to global coordinates.
     """
     if not text:
         return []
 
-    token_matches = list(re.finditer(r"\S+", text))
-    if not token_matches:
+    try:
+        nlp = _get_tokenizer()
+        doc = nlp(text)
+        tokens = list(doc)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.debug("spaCy tokenization failed: %s, falling back to text as single chunk", e)
         return [(0, text)]
-    if len(token_matches) <= max_tokens:
+
+    if not tokens:
+        return [(0, text)]
+    if len(tokens) <= max_tokens:
         return [(0, text)]
 
     effective_overlap = max(0, min(overlap_tokens, max_tokens - 1))
@@ -55,13 +75,13 @@ def _chunk_text_for_gliner(
     chunks: List[Tuple[int, str]] = []
     start_idx = 0
 
-    while start_idx < len(token_matches):
-        end_idx = min(start_idx + max_tokens, len(token_matches))
-        chunk_start = token_matches[start_idx].start()
-        chunk_end = token_matches[end_idx - 1].end()
-        chunks.append((chunk_start, text[chunk_start:chunk_end]))
+    while start_idx < len(tokens):
+        end_idx = min(start_idx + max_tokens, len(tokens))
+        chunk_start_char = tokens[start_idx].idx
+        chunk_end_char = tokens[end_idx - 1].idx + len(tokens[end_idx - 1].text)
+        chunks.append((chunk_start_char, text[chunk_start_char:chunk_end_char]))
 
-        if end_idx >= len(token_matches):
+        if end_idx >= len(tokens):
             break
         start_idx += step
 

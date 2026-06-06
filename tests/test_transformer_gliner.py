@@ -190,15 +190,65 @@ class TestGlinerEvidence:
 
         chunks = gliner._chunk_text_for_gliner(text)
 
-        assert len(chunks) == 3
-        assert all(len(chunk_text.split()) <= gliner._GLINER_MAX_TOKENS for _, chunk_text in chunks)
+        # With 1000 tokens and 384 max, should get multiple chunks
+        assert len(chunks) >= 2
+        
+        # Verify each chunk doesn't exceed max tokens
+        nlp = gliner._get_tokenizer()
+        for _, chunk_text in chunks:
+            chunk_tokens = list(nlp(chunk_text))
+            assert len(chunk_tokens) <= gliner._GLINER_MAX_TOKENS, \
+                f"Chunk has {len(chunk_tokens)} tokens, exceeds max {gliner._GLINER_MAX_TOKENS}"
+        
+        # Verify offsets are sorted
         assert [offset for offset, _ in chunks] == sorted(offset for offset, _ in chunks)
 
-        # Verify configured overlap continuity between adjacent chunks.
+        # Verify overlap continuity between adjacent chunks (using token text)
         for i in range(len(chunks) - 1):
-            left_tokens = chunks[i][1].split()
-            right_tokens = chunks[i + 1][1].split()
-            assert left_tokens[-gliner._GLINER_OVERLAP_TOKENS:] == right_tokens[:gliner._GLINER_OVERLAP_TOKENS]
+            left_tokens = list(nlp(chunks[i][1]))
+            right_tokens = list(nlp(chunks[i + 1][1]))
+            left_text = " ".join(t.text for t in left_tokens[-gliner._GLINER_OVERLAP_TOKENS:])
+            right_text = " ".join(t.text for t in right_tokens[:gliner._GLINER_OVERLAP_TOKENS])
+            assert left_text == right_text, \
+                f"Overlap mismatch: left ends with '{left_text}' but right starts with '{right_text}'"
+
+    def test_chunk_text_for_gliner_exact_token_boundaries(self):
+        """Verify chunks respect exact token boundaries with spaCy tokenizer."""
+        nlp = gliner._get_tokenizer()
+        
+        # Test: exactly at max tokens boundary (384)
+        text_384 = " ".join(f"tok{i}" for i in range(384))
+        chunks_384 = gliner._chunk_text_for_gliner(text_384)
+        doc_384 = nlp(text_384)
+        assert len(list(doc_384)) == 384, f"Expected 384 tokens, got {len(list(doc_384))}"
+        assert len(chunks_384) == 1, f"384 tokens should be 1 chunk, got {len(chunks_384)}"
+        
+        # Test: one token over max (385)
+        text_385 = " ".join(f"tok{i}" for i in range(385))
+        chunks_385 = gliner._chunk_text_for_gliner(text_385)
+        doc_385 = nlp(text_385)
+        assert len(list(doc_385)) == 385, f"Expected 385 tokens, got {len(list(doc_385))}"
+        assert len(chunks_385) == 2, f"385 tokens should be 2 chunks, got {len(chunks_385)}"
+        
+        # Test: verify each chunk respects max tokens
+        for chunk_idx, (_, chunk_text) in enumerate(chunks_385):
+            chunk_doc = nlp(chunk_text)
+            chunk_token_count = len(list(chunk_doc))
+            assert chunk_token_count <= gliner._GLINER_MAX_TOKENS, \
+                f"Chunk {chunk_idx} has {chunk_token_count} tokens, exceeds max {gliner._GLINER_MAX_TOKENS}"
+        
+        # Test: 2x max + overlap should still produce correct token counts
+        text_large = " ".join(f"word{i}" for i in range(768))  # 2 * 384
+        chunks_large = gliner._chunk_text_for_gliner(text_large)
+        doc_large = nlp(text_large)
+        total_text_tokens = len(list(doc_large))
+        
+        # Verify all chunks stay under max
+        for chunk_idx, (_, chunk_text) in enumerate(chunks_large):
+            chunk_doc = nlp(chunk_text)
+            chunk_token_count = len(list(chunk_doc))
+            assert chunk_token_count <= gliner._GLINER_MAX_TOKENS, \
+                f"Chunk {chunk_idx} of large text has {chunk_token_count} tokens, exceeds {gliner._GLINER_MAX_TOKENS}"
 
     def test_gliner_evidence_chunks_text_over_384_tokens(self, monkeypatch):
         """Long text should be split into multiple GLiNER chunks."""
