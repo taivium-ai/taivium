@@ -30,3 +30,17 @@ def test_spacy_model_oserror(monkeypatch):
     with pytest.raises(OSError, match="spaCy model 'en_core_web_sm' not found"):
         utility.get_spacy_model.cache_clear()
         utility.get_spacy_model()
+
+
+# --- _verify_onnx_provider exception handling (line 47-50) ---
+def test_verify_onnx_provider_exception_fallback(monkeypatch):
+    """_verify_onnx_provider catches exceptions and returns fallback string."""
+    class BadModel:
+        pass
+    
+    def bad_get_available_providers(*args):
+        raise RuntimeError("ONNX error")
+    
+    monkeypatch.setattr(utility.rt, "get_available_providers", bad_get_available_providers)
+    result = utility._verify_onnx_provider(BadModel())
+    assert result == "CPUExecutionProvider (fallback)"

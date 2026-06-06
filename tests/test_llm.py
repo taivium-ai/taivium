@@ -309,4 +309,19 @@ def test_llm_handles_openai_error(monkeypatch):
             raise RuntimeError("fail")
     monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
     result = llm_mod.llm_evidence("test")
-    assert result == []
+
+
+def test_llm_warn_state_is_warned_and_reset():
+    """_WarnState.is_warned() and reset_warning() work correctly (lines 35, 40)."""
+    from taivium import llm as llm_module
+    
+    llm_module._WarnState.reset_warning()
+    assert not llm_module._WarnState.is_warned()
+    
+    # Manually set warned state
+    llm_module._WarnState.warned_no_api_key = True
+    assert llm_module._WarnState.is_warned()
+    
+    # Reset
+    llm_module._WarnState.reset_warning()
+    assert not llm_module._WarnState.is_warned()

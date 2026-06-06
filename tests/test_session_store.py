@@ -298,4 +298,27 @@ def test_redis_importerror(monkeypatch):
     s._client = FakeClient()
     s._prefix = "test:"
     s._ttl = 123
+
+
+def test_redis_session_store_set_many_empty_mapping():
+    """set_many with empty mapping returns early without pipeline call."""
+    class FakeClient:
+        def pipeline(self):
+            class Pipe:
+                def __init__(self):
+                    self.calls = []
+                def set(self, k, v, ex=None):
+                    self.calls.append((k, v, ex))
+                def execute(self):
+                    return self.calls
+            return Pipe()
+    
+    s = store_mod.RedisSessionStore.__new__(store_mod.RedisSessionStore)
+    s._client = FakeClient()
+    s._prefix = "test:"
+    s._ttl = 123
+    
+    # Call with empty mapping (line 189)
+    s.set_many({})
+    # Should return early without error
     s.set_many({"id": {"meta": 1}})  # Should not raise

@@ -104,7 +104,7 @@ class TestGlinerEvidence:
         mock_model = types.SimpleNamespace(predict_entities=failing_predict)
         from taivium.utility import get_gliner_model
         monkeypatch.setattr(get_gliner_model, "cache_clear", lambda: None)
-        monkeypatch.setattr("taivium.transformer_gliner.get_gliner_model", lambda: mock_model)
+        monkeypatch.setattr(gliner, "get_gliner_model", lambda: mock_model)
         
         with caplog.at_level(logging.WARNING, logger="taivium.engine"):
             result = gliner.gliner_evidence("test text")
@@ -319,7 +319,7 @@ class TestGlinerEvidence:
             predict_entities=fake_predict_entities,
             data_processor=types.SimpleNamespace(transformer_tokenizer=real_tokenizer)
         )
-        monkeypatch.setattr("taivium.transformer_gliner.get_gliner_model", lambda: mock_model)
+        monkeypatch.setattr(gliner, "get_gliner_model", lambda: mock_model)
 
         long_text = " ".join(f"tok{i}" for i in range(420))
         result = gliner.gliner_evidence(long_text)
@@ -357,7 +357,7 @@ class TestGlinerEvidence:
             predict_entities=fail_predict_entities,
             data_processor=types.SimpleNamespace(transformer_tokenizer=real_tokenizer)
         )
-        monkeypatch.setattr("taivium.transformer_gliner.get_gliner_model", lambda: mock_model)
+        monkeypatch.setattr(gliner, "get_gliner_model", lambda: mock_model)
 
         long_text = " ".join(f"tok{i}" for i in range(420))
         result = gliner.gliner_evidence(long_text)
@@ -577,7 +577,7 @@ class TestGlinerEvidence:
         def failing_get_model():
             raise RuntimeError("Model loading failed")
         
-        monkeypatch.setattr("taivium.transformer_gliner.get_gliner_model", failing_get_model)
+        monkeypatch.setattr(gliner, "get_gliner_model", failing_get_model)
         
         with caplog.at_level(logging.WARNING, logger="taivium.engine"):
             result = gliner.gliner_evidence("John Smith")
@@ -602,7 +602,7 @@ class TestGlinerEvidence:
             predict_entities=fake_predict,
             data_processor=types.SimpleNamespace(transformer_tokenizer=real_tokenizer)
         )
-        monkeypatch.setattr("taivium.transformer_gliner.get_gliner_model", lambda: mock_model)
+        monkeypatch.setattr(gliner, "get_gliner_model", lambda: mock_model)
         
         result = gliner.gliner_evidence("John Smith")
         
@@ -625,7 +625,7 @@ class TestGlinerEvidence:
             predict_entities=fake_predict,
             data_processor=types.SimpleNamespace(transformer_tokenizer=real_tokenizer)
         )
-        monkeypatch.setattr("taivium.transformer_gliner.get_gliner_model", lambda: mock_model)
+        monkeypatch.setattr(gliner, "get_gliner_model", lambda: mock_model)
         
         result = gliner.gliner_evidence("John Smith Company")
         
@@ -692,7 +692,7 @@ class TestGlinerEvidence:
             predict_entities=fake_predict,
             data_processor=types.SimpleNamespace(transformer_tokenizer=real_tokenizer)
         )
-        monkeypatch.setattr("taivium.transformer_gliner.get_gliner_model", lambda: mock_model)
+        monkeypatch.setattr(gliner, "get_gliner_model", lambda: mock_model)
         
         result = gliner.gliner_evidence("John Smith")
         
@@ -711,13 +711,13 @@ class TestGlinerEvidence:
                 return []
         
         mock_model = types.SimpleNamespace(predict_entities=fake_predict)
-        monkeypatch.setattr("taivium.transformer_gliner.get_gliner_model", lambda: mock_model)
+        monkeypatch.setattr(gliner, "get_gliner_model", lambda: mock_model)
         
         # Mock chunking to return specific chunks with offsets
         def fake_chunk(text, **kwargs):
             return [(0, "chunk1"), (50, "chunk2")]
         
-        monkeypatch.setattr("taivium.transformer_gliner._chunk_text_for_gliner", fake_chunk)
+        monkeypatch.setattr(gliner, "_chunk_text_for_gliner", fake_chunk)
         
         result = gliner.gliner_evidence("dummy text")
         
@@ -742,7 +742,7 @@ class TestGlinerEvidence:
             return []  # No predictions
         
         mock_model = types.SimpleNamespace(predict_entities=fake_predict)
-        monkeypatch.setattr("taivium.transformer_gliner.get_gliner_model", lambda: mock_model)
+        monkeypatch.setattr(gliner, "get_gliner_model", lambda: mock_model)
         
         result = gliner.gliner_evidence("some text")
         
@@ -765,7 +765,7 @@ class TestGlinerEvidence:
             predict_entities=fake_predict,
             data_processor=types.SimpleNamespace(transformer_tokenizer=real_tokenizer)
         )
-        monkeypatch.setattr("taivium.transformer_gliner.get_gliner_model", lambda: mock_model)
+        monkeypatch.setattr(gliner, "get_gliner_model", lambda: mock_model)
         
         result = gliner.gliner_evidence("text")
         
@@ -785,7 +785,7 @@ class TestGlinerEvidence:
             predict_entities=fake_predict,
             data_processor=types.SimpleNamespace(transformer_tokenizer=real_tokenizer)
         )
-        monkeypatch.setattr("taivium.transformer_gliner.get_gliner_model", lambda: mock_model)
+        monkeypatch.setattr(gliner, "get_gliner_model", lambda: mock_model)
         
         result = gliner.gliner_evidence("Jöhn @#$% Smith")
         

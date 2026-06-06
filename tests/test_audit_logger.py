@@ -156,3 +156,21 @@ def test_enterprise_override_import_error_keeps_default():
         importlib.reload(_mod)
         for k, v in sys_modules_backup.items():
             sys.modules[k] = v
+
+
+def test_log_audit_event_suppressed_by_env_var(monkeypatch, capsys):
+    """When TAIVIUM_AUDIT_STDOUT is set to '0', logger output is skipped."""
+    monkeypatch.setenv("TAIVIUM_AUDIT_STDOUT", "0")
+    _call()
+    out = capsys.readouterr().out.strip()
+    # Should not have emitted anything since suppressed
+    assert out == ""
+
+
+def test_log_audit_event_false_values_suppress(monkeypatch, capsys):
+    """When TAIVIUM_AUDIT_STDOUT is 'false', 'off', or 'no', output is suppressed."""
+    for value in ["false", "off", "no"]:
+        monkeypatch.setenv("TAIVIUM_AUDIT_STDOUT", value)
+        _call()
+        out = capsys.readouterr().out.strip()
+        assert out == "", f"TAIVIUM_AUDIT_STDOUT={value} should suppress output"
