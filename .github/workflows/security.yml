@@ -1,5 +1,8 @@
 name: Security Audit
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 on:
   push:
     branches: ["main", "develop"]
@@ -14,10 +17,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -38,8 +41,8 @@ jobs:
         continue-on-error: true
         run: |
           echo "=== Static Application Security Testing ==="
-          bandit -r src/ -f json -o bandit-report.json
-          bandit -r src/ -f txt
+          bandit -r src/ -f json -o bandit-report.json || true
+          bandit -r src/ -f txt || true
 
       # 3. Secrets Detection
       - name: Run detect-secrets
@@ -60,7 +63,7 @@ jobs:
       # 5. Upload Bandit report
       - name: Upload Bandit Report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: bandit-report
           path: bandit-report.json
@@ -74,10 +77,22 @@ jobs:
           # Bandit can output SARIF for GitHub Code Scanning
           bandit -r src/ -f sarif -o bandit-sarif.sarif || true
 
-      - name: Upload SARIF to GitHub Security
+      - name: Check SARIF output exists
         if: always()
+        id: sarif_check
+        shell: bash
+        run: |
+          if [ -f bandit-sarif.sarif ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "bandit-sarif.sarif not generated; skipping upload."
+          fi
+
+      - name: Upload SARIF to GitHub Security
+        if: always() && steps.sarif_check.outputs.exists == 'true'
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: bandit-sarif.sarif
           category: bandit
