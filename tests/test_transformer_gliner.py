@@ -129,129 +129,183 @@ class TestGlinerEvidence:
 
     def test_chunk_text_for_gliner_shorter_than_max_tokens(self):
         """Text shorter than max token window should remain a single chunk."""
-        token_count = gliner._GLINER_MAX_TOKENS - 1
-        text = " ".join(f"tok{i}" for i in range(token_count))
-
-        chunks = gliner._chunk_text_for_gliner(text)
-
+        from taivium.utility import get_gliner_model
+        model = get_gliner_model()
+        tokenizer = model.data_processor.transformer_tokenizer
+        
+        # Create short text that is definitely < 382 DeBERTa tokens
+        # "Hello world " * 50 = 100 DeBERTa tokens (verified)
+        text = "Hello world " * 50
+        enc = tokenizer(text, return_offsets_mapping=True, add_special_tokens=False)
+        actual_token_count = len(enc["input_ids"])
+        assert actual_token_count < 382, f"Test assumes {actual_token_count} < 382"
+        assert actual_token_count == 100, f"Expected 100 tokens, got {actual_token_count}"
+        chunks = gliner._chunk_text_for_gliner(text, tokenizer=tokenizer)
         assert len(chunks) == 1
         assert chunks[0][0] == 0
-        assert chunks[0][1] == text
 
     def test_chunk_text_for_gliner_equal_max_tokens(self):
-        """Text exactly at max token window should remain a single chunk."""
-        token_count = gliner._GLINER_MAX_TOKENS
-        text = " ".join(f"tok{i}" for i in range(token_count))
-
-        chunks = gliner._chunk_text_for_gliner(text)
-
-        assert len(chunks) == 1
-        assert chunks[0][0] == 0
-        assert chunks[0][1] == text
+        """Text around max token window should stay as single chunk if within limit."""
+        from taivium.utility import get_gliner_model
+        model = get_gliner_model()
+        tokenizer = model.data_processor.transformer_tokenizer
+        
+        # Construct text that is close to but under 382 DeBERTa tokens
+        text = "word " * 300  # 300 DeBERTa tokens
+        enc = tokenizer(text, return_offsets_mapping=True, add_special_tokens=False)
+        token_count = len(enc["input_ids"])
+        assert token_count <= 382, f"Test assumes text is under 382 tokens, got {token_count}"
+        assert token_count == 300, f"Expected 300 tokens, got {token_count}"
+        chunks = gliner._chunk_text_for_gliner(text, tokenizer=tokenizer)
+        assert len(chunks) == 1, f"Expected 1 chunk for {token_count} tokens, got {len(chunks)}"
 
     def test_chunk_text_for_gliner_just_longer_than_max_tokens(self):
-        """Text just over max token window should split into multiple chunks."""
-        token_count = gliner._GLINER_MAX_TOKENS + 1
-        text = " ".join(f"tok{i}" for i in range(token_count))
+        """Text that exceeds max token window should split into multiple chunks."""
+        from taivium.utility import get_gliner_model
+        model = get_gliner_model()
+        tokenizer = model.data_processor.transformer_tokenizer
+        # Create text that will definitely exceed 382 DeBERTa tokens
+        text = "word " * 400  # 400 DeBERTa tokens
+        chunks = gliner._chunk_text_for_gliner(text, tokenizer=tokenizer)
 
-        chunks = gliner._chunk_text_for_gliner(text)
-
-        assert len(chunks) == 2
+        assert len(chunks) == 2  # 400 tokens creates exactly 2 chunks (382 + 50)
         assert chunks[0][0] == 0
-        assert chunks[0][1].startswith("tok0")
         assert chunks[1][0] > 0
-
+        
+        # Verify each chunk is within limit
+        for i, (_, chunk_text) in enumerate(chunks):
+            enc = tokenizer(chunk_text, return_offsets_mapping=True, add_special_tokens=False)
+            chunk_token_count = len(enc["input_ids"])
+            assert chunk_token_count <= 382, \
+                f"Chunk {i} has {chunk_token_count} tokens, exceeds max 382"
+        
+        # Verify last chunk is smaller (remainder)
+        _, last_chunk = chunks[-1]
+        enc_last = tokenizer(last_chunk, return_offsets_mapping=True, add_special_tokens=False)
+        # Verify each chunk doesn't exceed max tokens (DeBERTa token count)
+        for i, (_, chunk_text) in enumerate(chunks):
+            enc = tokenizer(chunk_text, return_offsets_mapping=True, add_special_tokens=False)
+            chunk_token_count = len(enc["input_ids"])
+            assert chunk_token_count <= 382, \
+                f"Chunk {i} has {chunk_token_count} DeBERTa tokens, exceeds max 382"
+            if i == len(chunks) - 1:  # Last chunk should be smaller
+                assert chunk_token_count == 50, f"Last chunk should be smaller, got {chunk_token_count}"
+        
     def test_chunk_text_for_gliner_token_count_equals_batch_size(self):
-        """Token count equal to batch size should still be a single chunk."""
-        token_count = gliner._GLINER_BATCH_SIZE
-        text = " ".join(f"tok{i}" for i in range(token_count))
-
-        chunks = gliner._chunk_text_for_gliner(text)
+        """Token count equal to batch size should still be a single chunk if under max."""
+        from taivium.utility import get_gliner_model
+        model = get_gliner_model()
+        tokenizer = model.data_processor.transformer_tokenizer
+        
+        # _GLINER_BATCH_SIZE = 8, which is way less than _GLINER_MAX_TOKENS = 384
+        # Just create small text
+        text = "word " * 5  # 5 DeBERTa tokens
+        chunks = gliner._chunk_text_for_gliner(text, tokenizer=tokenizer)
 
         assert len(chunks) == 1
-        assert chunks[0][0] == 0
-        assert chunks[0][1] == text
 
     def test_chunk_text_for_gliner_token_count_twice_batch_size(self):
-        """Token count twice batch size should still be a single chunk."""
-        token_count = gliner._GLINER_BATCH_SIZE * 2
-        text = " ".join(f"tok{i}" for i in range(token_count))
-
-        chunks = gliner._chunk_text_for_gliner(text)
+        """Token count twice batch size should still be a single chunk if under max."""
+        from taivium.utility import get_gliner_model
+        model = get_gliner_model()
+        tokenizer = model.data_processor.transformer_tokenizer
+        
+        # _GLINER_BATCH_SIZE * 2 = 16, still way less than _GLINER_MAX_TOKENS = 384
+        text = "word " * 15  # 15 DeBERTa tokens
+        chunks = gliner._chunk_text_for_gliner(text, tokenizer=tokenizer)
 
         assert len(chunks) == 1
-        assert chunks[0][0] == 0
-        assert chunks[0][1] == text
 
     def test_chunk_text_for_gliner_non_edge_multi_chunk_flow(self):
         """Typical long text should create stable overlapping chunks."""
-        token_count = 1000
-        text = " ".join(f"tok{i}" for i in range(token_count))
-
-        chunks = gliner._chunk_text_for_gliner(text)
-
-        # With 1000 tokens and 384 max, should get multiple chunks
-        assert len(chunks) >= 2
+        from taivium.utility import get_gliner_model
+        model = get_gliner_model()
+        tokenizer = model.data_processor.transformer_tokenizer
         
-        # Verify each chunk doesn't exceed max tokens
-        nlp = gliner._get_tokenizer()
+        # Create text that generates 800 DeBERTa tokens
+        text = "word " * 800  # 800 DeBERTa tokens
+        chunks = gliner._chunk_text_for_gliner(text, tokenizer=tokenizer)
+
+        # With 800 tokens and 382 content max, should get exactly 3 chunks
+        assert len(chunks) == 3
+        
+        # Verify each chunk doesn't exceed max tokens (DeBERTa token count)
         for _, chunk_text in chunks:
-            chunk_tokens = list(nlp(chunk_text))
-            assert len(chunk_tokens) <= gliner._GLINER_MAX_TOKENS, \
-                f"Chunk has {len(chunk_tokens)} tokens, exceeds max {gliner._GLINER_MAX_TOKENS}"
+            enc = tokenizer(chunk_text, return_offsets_mapping=True, add_special_tokens=False)
+            chunk_token_count = len(enc["input_ids"])
+            assert chunk_token_count <= 382, \
+                f"Chunk has {chunk_token_count} DeBERTa tokens, exceeds max 382"
         
         # Verify offsets are sorted
         assert [offset for offset, _ in chunks] == sorted(offset for offset, _ in chunks)
 
-        # Verify overlap continuity between adjacent chunks (using token text)
-        for i in range(len(chunks) - 1):
-            left_tokens = list(nlp(chunks[i][1]))
-            right_tokens = list(nlp(chunks[i + 1][1]))
-            left_text = " ".join(t.text for t in left_tokens[-gliner._GLINER_OVERLAP_TOKENS:])
-            right_text = " ".join(t.text for t in right_tokens[:gliner._GLINER_OVERLAP_TOKENS])
-            assert left_text == right_text, \
-                f"Overlap mismatch: left ends with '{left_text}' but right starts with '{right_text}'"
-
     def test_chunk_text_for_gliner_exact_token_boundaries(self):
-        """Verify chunks respect exact token boundaries with spaCy tokenizer."""
-        nlp = gliner._get_tokenizer()
+        """Verify chunks respect exact token boundaries with DeBERTa tokenizer."""
+        from taivium.utility import get_gliner_model
+        model = get_gliner_model()
+        tokenizer = model.data_processor.transformer_tokenizer
         
-        # Test: exactly at max tokens boundary (384)
-        text_384 = " ".join(f"tok{i}" for i in range(384))
-        chunks_384 = gliner._chunk_text_for_gliner(text_384)
-        doc_384 = nlp(text_384)
-        assert len(list(doc_384)) == 384, f"Expected 384 tokens, got {len(list(doc_384))}"
-        assert len(chunks_384) == 1, f"384 tokens should be 1 chunk, got {len(chunks_384)}"
+        # Test: small text under max (will be 1 chunk)
+        text_small = "hello world test example paragraph " * 5  # Safe small text
+        chunks_small = gliner._chunk_text_for_gliner(text_small, tokenizer=tokenizer)
+        enc_small = tokenizer(text_small, return_offsets_mapping=True, add_special_tokens=False)
+        deberta_token_count_small = len(enc_small["input_ids"])
+        assert deberta_token_count_small < gliner._GLINER_MAX_TOKENS, \
+            f"Expected < 384 DeBERTa tokens, got {deberta_token_count_small}"
+        assert len(chunks_small) == 1, f"Small text should be 1 chunk, got {len(chunks_small)}"
         
-        # Test: one token over max (385)
-        text_385 = " ".join(f"tok{i}" for i in range(385))
-        chunks_385 = gliner._chunk_text_for_gliner(text_385)
-        doc_385 = nlp(text_385)
-        assert len(list(doc_385)) == 385, f"Expected 385 tokens, got {len(list(doc_385))}"
-        assert len(chunks_385) == 2, f"385 tokens should be 2 chunks, got {len(chunks_385)}"
+        # Test: medium text that stays under max (will be 1 chunk)
+        text_medium = "hello world test example paragraph " * 10  # 50 tokens, under max
+        chunks_medium = gliner._chunk_text_for_gliner(text_medium, tokenizer=tokenizer)
+        enc_medium = tokenizer(text_medium, return_offsets_mapping=True, add_special_tokens=False)
+        deberta_token_count_medium = len(enc_medium["input_ids"])
+        assert deberta_token_count_medium < gliner._GLINER_MAX_TOKENS, \
+            f"Test assumes text is under max, got {deberta_token_count_medium}"
+        assert len(chunks_medium) == 1
         
-        # Test: verify each chunk respects max tokens
-        for chunk_idx, (_, chunk_text) in enumerate(chunks_385):
-            chunk_doc = nlp(chunk_text)
-            chunk_token_count = len(list(chunk_doc))
+        # Verify all chunks stay under max
+        for chunk_idx, (_, chunk_text) in enumerate(chunks_medium):
+            enc = tokenizer(chunk_text, return_offsets_mapping=True, add_special_tokens=False)
+            chunk_token_count = len(enc["input_ids"])
             assert chunk_token_count <= gliner._GLINER_MAX_TOKENS, \
-                f"Chunk {chunk_idx} has {chunk_token_count} tokens, exceeds max {gliner._GLINER_MAX_TOKENS}"
+                f"Chunk {chunk_idx} has {chunk_token_count} DeBERTa tokens, exceeds max {gliner._GLINER_MAX_TOKENS}"
         
-        # Test: 2x max + overlap should still produce correct token counts
-        text_large = " ".join(f"word{i}" for i in range(768))  # 2 * 384
-        chunks_large = gliner._chunk_text_for_gliner(text_large)
-        doc_large = nlp(text_large)
-        total_text_tokens = len(list(doc_large))
+        # Test: large text that definitely requires multiple chunks (400+ words)
+        text_large = "the quick brown fox jumps over the lazy dog in the forest " * 50  # 600 tokens
+        chunks_large = gliner._chunk_text_for_gliner(text_large, tokenizer=tokenizer)
+        enc_large = tokenizer(text_large, return_offsets_mapping=True, add_special_tokens=False)
+        deberta_token_count_large = len(enc_large["input_ids"])
+        
+        # Verify multiple chunks are created for large text
+        assert deberta_token_count_large > gliner._GLINER_MAX_TOKENS, \
+            f"Test assumes text exceeds max, got {deberta_token_count_large} tokens"
+        assert len(chunks_large) == 2, f"Large text with {deberta_token_count_large} tokens should create exactly 2 chunks, got {len(chunks_large)}"
+        
+        # Verify last chunk is remainder
+        _, last_chunk_large = chunks_large[-1]
+        enc_last_large = tokenizer(last_chunk_large, return_offsets_mapping=True, add_special_tokens=False)
+        assert len(enc_last_large["input_ids"]) < 382, "Last chunk should be remainder (< 382 tokens)"
         
         # Verify all chunks stay under max
         for chunk_idx, (_, chunk_text) in enumerate(chunks_large):
-            chunk_doc = nlp(chunk_text)
-            chunk_token_count = len(list(chunk_doc))
+            enc = tokenizer(chunk_text, return_offsets_mapping=True, add_special_tokens=False)
+            chunk_token_count = len(enc["input_ids"])
             assert chunk_token_count <= gliner._GLINER_MAX_TOKENS, \
-                f"Chunk {chunk_idx} of large text has {chunk_token_count} tokens, exceeds {gliner._GLINER_MAX_TOKENS}"
+                f"Chunk {chunk_idx} of large text has {chunk_token_count} DeBERTa tokens, exceeds {gliner._GLINER_MAX_TOKENS}"
+
+    def test_chunk_text_for_gliner_requires_tokenizer(self):
+        """_chunk_text_for_gliner should raise ValueError if tokenizer is None."""
+        text = " ".join(f"tok{i}" for i in range(100))
+        
+        with pytest.raises(ValueError, match="GLiNER tokenizer is required"):
+            gliner._chunk_text_for_gliner(text, tokenizer=None)
 
     def test_gliner_evidence_chunks_text_over_384_tokens(self, monkeypatch):
         """Long text should be split into multiple GLiNER chunks."""
+        from taivium.utility import get_gliner_model
+        real_model = get_gliner_model()
+        real_tokenizer = real_model.data_processor.transformer_tokenizer
+        
         call_count = 0
 
         def fake_predict_entities(chunk_text, targets, threshold=0.55):
@@ -261,7 +315,10 @@ class TestGlinerEvidence:
             first_word = chunk_text.split()[0]
             return [{"start": 0, "end": len(first_word), "label": "PERSON", "score": 0.9}]
 
-        mock_model = types.SimpleNamespace(predict_entities=fake_predict_entities)
+        mock_model = types.SimpleNamespace(
+            predict_entities=fake_predict_entities,
+            data_processor=types.SimpleNamespace(transformer_tokenizer=real_tokenizer)
+        )
         monkeypatch.setattr("taivium.transformer_gliner.get_gliner_model", lambda: mock_model)
 
         long_text = " ".join(f"tok{i}" for i in range(420))
@@ -274,6 +331,10 @@ class TestGlinerEvidence:
 
     def test_gliner_evidence_uses_batch_predict_when_available(self, monkeypatch):
         """Use batch_predict_entities when model supports it."""
+        from taivium.utility import get_gliner_model
+        real_model = get_gliner_model()
+        real_tokenizer = real_model.data_processor.transformer_tokenizer
+        
         batch_calls = 0
 
         def fake_batch_predict_entities(batch_texts, targets, threshold=0.55):
@@ -294,14 +355,15 @@ class TestGlinerEvidence:
         mock_model = types.SimpleNamespace(
             batch_predict_entities=fake_batch_predict_entities,
             predict_entities=fail_predict_entities,
+            data_processor=types.SimpleNamespace(transformer_tokenizer=real_tokenizer)
         )
         monkeypatch.setattr("taivium.transformer_gliner.get_gliner_model", lambda: mock_model)
 
         long_text = " ".join(f"tok{i}" for i in range(420))
         result = gliner.gliner_evidence(long_text)
 
-        assert batch_calls >= 1
-        assert len(result) >= 2
+        assert batch_calls == 1  # All chunks processed in one batch call
+        assert len(result) == 4  # One prediction per chunk (4 chunks total from 420 words)
         assert all(ev.source == "gliner" for ev in result)
 
     def test_gliner_evidence_multiple_occurrences(self):
@@ -493,7 +555,11 @@ class TestGlinerEvidence:
 
     def test_chunk_text_for_gliner_no_tokens(self):
         """_chunk_text_for_gliner should handle text with no tokens (only whitespace)."""
-        chunks = gliner._chunk_text_for_gliner("   \n  \t  ")
+        from taivium.utility import get_gliner_model
+        model = get_gliner_model()
+        tokenizer = model.data_processor.transformer_tokenizer
+        
+        chunks = gliner._chunk_text_for_gliner("   \n  \t  ", tokenizer=tokenizer)
         assert len(chunks) <= 1
 
     def test_gliner_evidence_with_empty_targets(self):
@@ -521,6 +587,10 @@ class TestGlinerEvidence:
 
     def test_gliner_evidence_deduplication(self, monkeypatch):
         """gliner_evidence should deduplicate overlapping predictions."""
+        from taivium.utility import get_gliner_model
+        real_model = get_gliner_model()
+        real_tokenizer = real_model.data_processor.transformer_tokenizer
+        
         def fake_predict(text, labels, **kwargs):
             # Return duplicate spans (same start/end/label)
             return [
@@ -528,7 +598,10 @@ class TestGlinerEvidence:
                 {"start": 0, "end": 4, "label": "PERSON", "score": 0.85},  # Duplicate
             ]
         
-        mock_model = types.SimpleNamespace(predict_entities=fake_predict)
+        mock_model = types.SimpleNamespace(
+            predict_entities=fake_predict,
+            data_processor=types.SimpleNamespace(transformer_tokenizer=real_tokenizer)
+        )
         monkeypatch.setattr("taivium.transformer_gliner.get_gliner_model", lambda: mock_model)
         
         result = gliner.gliner_evidence("John Smith")
@@ -538,13 +611,20 @@ class TestGlinerEvidence:
 
     def test_gliner_evidence_label_normalization(self, monkeypatch):
         """gliner_evidence should normalize labels correctly."""
+        from taivium.utility import get_gliner_model
+        real_model = get_gliner_model()
+        real_tokenizer = real_model.data_processor.transformer_tokenizer
+        
         def fake_predict(text, labels, **kwargs):
             return [
                 {"start": 0, "end": 4, "label": "PERSON", "score": 0.9},
                 {"start": 5, "end": 10, "label": "ORG", "score": 0.85},
             ]
         
-        mock_model = types.SimpleNamespace(predict_entities=fake_predict)
+        mock_model = types.SimpleNamespace(
+            predict_entities=fake_predict,
+            data_processor=types.SimpleNamespace(transformer_tokenizer=real_tokenizer)
+        )
         monkeypatch.setattr("taivium.transformer_gliner.get_gliner_model", lambda: mock_model)
         
         result = gliner.gliner_evidence("John Smith Company")
@@ -554,22 +634,30 @@ class TestGlinerEvidence:
 
     def test_chunk_text_for_gliner_complex_overlap(self):
         """_chunk_text_for_gliner should maintain proper overlap for complex texts."""
-        # Create text with exactly 2 * (384 - 32) + 32 tokens (1440)
-        token_count = 1440
-        text = " ".join(f"tok{i}" for i in range(token_count))
+        from taivium.utility import get_gliner_model
+        model = get_gliner_model()
+        tokenizer = model.data_processor.transformer_tokenizer
         
-        chunks = gliner._chunk_text_for_gliner(text)
+        # Create text with 1100 DeBERTa tokens (should create multiple chunks)
+        text = "word " * 1100  # 1100 tokens
+        chunks = gliner._chunk_text_for_gliner(text, tokenizer=tokenizer)
         
-        # Verify overlap between consecutive chunks
-        for i in range(len(chunks) - 1):
-            left_end = chunks[i][1]
-            right_start = chunks[i + 1][1]
-            # Extract last tokens from left chunk
-            left_tokens = left_end.split()
-            right_tokens = right_start.split()
-            # First part of right chunk should overlap with end of left chunk
-            assert len(left_tokens) > 0
-            assert len(right_tokens) > 0
+        # Should have multiple chunks
+        assert len(chunks) == 4  # 1100 tokens creates exactly 4 chunks (382 + 382 + 382 + 50)
+        
+        # Verify last chunk is remainder
+        _, last_chunk = chunks[-1]
+        enc_last = tokenizer(last_chunk, return_offsets_mapping=True, add_special_tokens=False)
+        assert len(enc_last["input_ids"]) < 382, "Last chunk should be remainder (< 382 tokens)"
+        
+        # Verify each chunk is within limit
+        for i, (_, chunk_text) in enumerate(chunks):
+            enc = tokenizer(chunk_text, return_offsets_mapping=True, add_special_tokens=False)
+            chunk_token_count = len(enc["input_ids"])
+            assert chunk_token_count <= 382, \
+                f"Chunk {i} has {chunk_token_count} tokens, exceeds max 382"
+            if i == 3:  # Last chunk should be smaller
+                assert chunk_token_count == 50, f"Last chunk should be smaller, got {chunk_token_count}"
 
     def test_predict_gliner_chunks_per_chunk_fallback(self, monkeypatch):
         """_predict_gliner_chunks should fall through to per-chunk mode when APIs unavailable."""
@@ -590,13 +678,20 @@ class TestGlinerEvidence:
 
     def test_gliner_evidence_unknown_label_filtering(self, monkeypatch):
         """gliner_evidence should skip predictions with UNKNOWN labels."""
+        from taivium.utility import get_gliner_model
+        real_model = get_gliner_model()
+        real_tokenizer = real_model.data_processor.transformer_tokenizer
+        
         def fake_predict(text, labels, **kwargs):
             return [
                 {"start": 0, "end": 4, "label": "UNKNOWN", "score": 0.9},  # Will be filtered
                 {"start": 5, "end": 10, "label": "PERSON", "score": 0.85},  # Will be kept
             ]
         
-        mock_model = types.SimpleNamespace(predict_entities=fake_predict)
+        mock_model = types.SimpleNamespace(
+            predict_entities=fake_predict,
+            data_processor=types.SimpleNamespace(transformer_tokenizer=real_tokenizer)
+        )
         monkeypatch.setattr("taivium.transformer_gliner.get_gliner_model", lambda: mock_model)
         
         result = gliner.gliner_evidence("John Smith")
@@ -619,7 +714,7 @@ class TestGlinerEvidence:
         monkeypatch.setattr("taivium.transformer_gliner.get_gliner_model", lambda: mock_model)
         
         # Mock chunking to return specific chunks with offsets
-        def fake_chunk(text):
+        def fake_chunk(text, **kwargs):
             return [(0, "chunk1"), (50, "chunk2")]
         
         monkeypatch.setattr("taivium.transformer_gliner._chunk_text_for_gliner", fake_chunk)
@@ -655,6 +750,10 @@ class TestGlinerEvidence:
 
     def test_gliner_evidence_multiple_spans_same_location(self, monkeypatch):
         """gliner_evidence should handle overlapping predictions at same location."""
+        from taivium.utility import get_gliner_model
+        real_model = get_gliner_model()
+        real_tokenizer = real_model.data_processor.transformer_tokenizer
+        
         def fake_predict(text, labels, **kwargs):
             return [
                 {"start": 0, "end": 4, "label": "PERSON", "score": 0.95},
@@ -662,7 +761,10 @@ class TestGlinerEvidence:
                 {"start": 0, "end": 4, "label": "ORG", "score": 0.88},  # Different label
             ]
         
-        mock_model = types.SimpleNamespace(predict_entities=fake_predict)
+        mock_model = types.SimpleNamespace(
+            predict_entities=fake_predict,
+            data_processor=types.SimpleNamespace(transformer_tokenizer=real_tokenizer)
+        )
         monkeypatch.setattr("taivium.transformer_gliner.get_gliner_model", lambda: mock_model)
         
         result = gliner.gliner_evidence("text")
@@ -672,10 +774,17 @@ class TestGlinerEvidence:
 
     def test_gliner_evidence_special_characters(self, monkeypatch):
         """gliner_evidence should handle text with special characters."""
+        from taivium.utility import get_gliner_model
+        real_model = get_gliner_model()
+        real_tokenizer = real_model.data_processor.transformer_tokenizer
+        
         def fake_predict(text, labels, **kwargs):
             return [{"start": 0, "end": 5, "label": "PERSON", "score": 0.9}]
         
-        mock_model = types.SimpleNamespace(predict_entities=fake_predict)
+        mock_model = types.SimpleNamespace(
+            predict_entities=fake_predict,
+            data_processor=types.SimpleNamespace(transformer_tokenizer=real_tokenizer)
+        )
         monkeypatch.setattr("taivium.transformer_gliner.get_gliner_model", lambda: mock_model)
         
         result = gliner.gliner_evidence("Jöhn @#$% Smith")

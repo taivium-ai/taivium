@@ -7,15 +7,9 @@ variable-length text inputs. This module handles texts longer than GLiNER's
 
 import logging
 from typing import Any, cast, Dict, List, Optional, Tuple
-from functools import lru_cache
-
-import spacy
+from typing import TYPE_CHECKING
 
 from .utility import get_gliner_model
-
-# Import Evidence class and normalize_label from engine
-# Use TYPE_CHECKING to avoid circular imports
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     # This is only for type hints, won't cause circular import at runtime
@@ -32,77 +26,72 @@ _GLINER_OVERLAP_TOKENS = 32
 _GLINER_BATCH_SIZE = 8
 
 
-@lru_cache(maxsize=1)
-def _get_tokenizer():
-    """Get cached blank spaCy tokenizer for fast, accurate token counting.
-    
-    Uses spaCy's blank "en" model which provides accurate tokenization
-    without the overhead of full NLP pipeline (POS, dependencies, etc.).
-    """
-    return spacy.blank("en")
-
-
-def _warmup_tokenizer() -> None:  # pragma: no cover
-    """Warmup the cached tokenizer on first use (optional for production).
-    
-    Pre-JITs/warms the tokenizer with a dummy text to eliminate cold-start
-    latency on first real tokenization call. Load time: ~88ms (cached).
-    Warmup effect after calling this: removes ~1.6ms first-call overhead.
-    
-    Call once during initialization if you want zero-latency first tokenization.
-    """
-    try:
-        nlp = _get_tokenizer()
-        # Warmup with short dummy text
-        _ = nlp("warmup test")
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.debug("Tokenizer warmup failed (non-critical): %s", e)
-
-
 def _chunk_text_for_gliner(
     text: str,
     max_tokens: int = _GLINER_MAX_TOKENS,
     overlap_tokens: int = _GLINER_OVERLAP_TOKENS,
+    tokenizer: Any = None,
 ) -> List[Tuple[int, str]]:
     """Split text into overlapping token chunks for GLiNER window-limited inference.
 
-    Uses spaCy's blank tokenizer for accurate token counting without NLP overhead.
-    Returns a list of ``(offset, chunk_text)`` pairs where ``offset`` is the character 
-    start in the original text. Offsets allow chunk-local predictions to be remapped 
-    back to global coordinates.
+    REQUIRES the GLiNER's actual DeBERTa tokenizer (obtained from model.data_processor.transformer_tokenizer).
+    Chunks are sized using exact subword token counts to eliminate truncation.
+
+    Args:
+        text: Input text to chunk.
+        max_tokens: Maximum tokens per chunk (default: 384, GLiNER's hard limit).
+        overlap_tokens: Overlap between consecutive chunks (default: 32 tokens).
+        tokenizer: REQUIRED. GLiNER's DeBERTa tokenizer with offset_mapping support.
+                   Must not be None.
+
+    Returns:
+        List of ``(offset, chunk_text)`` pairs where ``offset`` is the character start in original text.
+
+    Raises:
+        ValueError: If tokenizer is None (no safe chunking without exact token counts).
+        RuntimeError: If tokenization fails (DeBERTa tokenizer error).
     """
     if not text:
         return []
 
+    # Tokenizer is REQUIRED — no unsafe fallback
+    if tokenizer is None:
+        raise ValueError(
+            "GLiNER tokenizer is required for safe chunking. "
+            "Pass tokenizer=model.data_processor.transformer_tokenizer to _chunk_text_for_gliner(). "
+            "No fallback tokenizer is available; truncation risk is unacceptable."
+        )
+
+    # Reserve 2 positions for CLS + SEP special tokens added at inference time
+    max_content_tokens = max_tokens - 2
     try:
-        nlp = _get_tokenizer()
-        doc = nlp(text)
-        tokens = list(doc)
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.debug("spaCy tokenization failed: %s, falling back to text as single chunk", e)
-        return [(0, text)]
+        enc = tokenizer(text, return_offsets_mapping=True, add_special_tokens=False)
+        token_offsets: List[Tuple[int, int]] = enc["offset_mapping"]
 
-    if not tokens:
-        return [(0, text)]
-    if len(tokens) <= max_tokens:
-        return [(0, text)]
+        if len(token_offsets) <= max_content_tokens:
+            return [(0, text)]
 
-    effective_overlap = max(0, min(overlap_tokens, max_tokens - 1))
-    step = max_tokens - effective_overlap
-    chunks: List[Tuple[int, str]] = []
-    start_idx = 0
+        effective_overlap = max(0, min(overlap_tokens, max_content_tokens - 1))
+        step = max_content_tokens - effective_overlap
+        chunks: List[Tuple[int, str]] = []
+        start_idx = 0
 
-    while start_idx < len(tokens):
-        end_idx = min(start_idx + max_tokens, len(tokens))
-        chunk_start_char = tokens[start_idx].idx
-        chunk_end_char = tokens[end_idx - 1].idx + len(tokens[end_idx - 1].text)
-        chunks.append((chunk_start_char, text[chunk_start_char:chunk_end_char]))
+        while start_idx < len(token_offsets):
+            end_idx = min(start_idx + max_content_tokens, len(token_offsets))
+            chunk_start_char = token_offsets[start_idx][0]
+            chunk_end_char = token_offsets[end_idx - 1][1]
+            chunks.append((chunk_start_char, text[chunk_start_char:chunk_end_char]))
 
-        if end_idx >= len(tokens):
-            break
-        start_idx += step
+            if end_idx >= len(token_offsets):
+                break
+            start_idx += step
 
-    return chunks
+        return chunks
+    except (AttributeError, TypeError, KeyError) as e:
+        raise RuntimeError(
+            f"DeBERTa tokenizer failed unexpectedly: {e}. "
+            "Ensure tokenizer is model.data_processor.transformer_tokenizer with offset_mapping support."
+        ) from e
 
 
 def _predict_gliner_chunks(
@@ -191,7 +180,8 @@ def gliner_evidence(text: str, targets: Optional[List[str]] = None) -> List[Any]
 
     try:
         model = get_gliner_model()
-        chunks = _chunk_text_for_gliner(text)
+        gliner_tokenizer = getattr(getattr(model, "data_processor", None), "transformer_tokenizer", None)
+        chunks = _chunk_text_for_gliner(text, tokenizer=gliner_tokenizer)
         if not chunks:
             return evidence
 

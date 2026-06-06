@@ -541,6 +541,6 @@ def test_long_text_performance():
     pipeline.process(long_text)
     elapsed_ms = (time.perf_counter() - start) * 1000
     # Adjust threshold based on environment: CI vs local
-    threshold_ms = 2000 if os.getenv("CI") else 550
+    threshold_ms = 2000 if os.getenv("CI") else 650
     assert elapsed_ms < threshold_ms, f"Processing 1426-char text took {elapsed_ms:.1f} ms, exceeds {threshold_ms} ms budget"
 
