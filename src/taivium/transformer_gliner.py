@@ -34,7 +34,8 @@ def _chunk_text_for_gliner(
 ) -> List[Tuple[int, str]]:
     """Split text into overlapping token chunks for GLiNER window-limited inference.
 
-    REQUIRES the GLiNER's actual DeBERTa tokenizer (obtained from model.data_processor.transformer_tokenizer).
+    REQUIRES the GLiNER's actual DeBERTa tokenizer 
+    (obtained from model.data_processor.transformer_tokenizer).
     Chunks are sized using exact subword token counts to eliminate truncation.
 
     Args:
@@ -45,7 +46,8 @@ def _chunk_text_for_gliner(
                    Must not be None.
 
     Returns:
-        List of ``(offset, chunk_text)`` pairs where ``offset`` is the character start in original text.
+        List of ``(offset, chunk_text)`` pairs where ``offset`` 
+            is the character start in original text.
 
     Raises:
         ValueError: If tokenizer is None (no safe chunking without exact token counts).
@@ -58,7 +60,8 @@ def _chunk_text_for_gliner(
     if tokenizer is None:
         raise ValueError(
             "GLiNER tokenizer is required for safe chunking. "
-            "Pass tokenizer=model.data_processor.transformer_tokenizer to _chunk_text_for_gliner(). "
+            "Pass tokenizer=model.data_processor.transformer_tokenizer " \
+            "to _chunk_text_for_gliner(). "
             "No fallback tokenizer is available; truncation risk is unacceptable."
         )
 
@@ -90,7 +93,8 @@ def _chunk_text_for_gliner(
     except (AttributeError, TypeError, KeyError) as e:
         raise RuntimeError(
             f"DeBERTa tokenizer failed unexpectedly: {e}. "
-            "Ensure tokenizer is model.data_processor.transformer_tokenizer with offset_mapping support."
+            "Ensure tokenizer is model.data_processor.transformer_tokenizer " \
+            "with offset_mapping support."
         ) from e
 
 
@@ -149,11 +153,12 @@ def _predict_gliner_chunks(
             )
 
     return [
-        cast(List[Dict[str, Any]], model.predict_entities(chunk_text, target_labels, threshold=threshold))
+        cast(List[Dict[str, Any]], model.predict_entities(chunk_text,
+                                                target_labels, threshold=threshold))
         for chunk_text in texts
     ]
 
-
+# pylint: disable=too-many-locals
 def gliner_evidence(text: str, targets: Optional[List[str]] = None) -> List[Any]:
     """Collect evidence from GLiNER for PERSON, LOCATION, and ORGANIZATION entities.
 
@@ -180,7 +185,8 @@ def gliner_evidence(text: str, targets: Optional[List[str]] = None) -> List[Any]
 
     try:
         model = get_gliner_model()
-        gliner_tokenizer = getattr(getattr(model, "data_processor", None), "transformer_tokenizer", None)
+        gliner_tokenizer = getattr(getattr(model, "data_processor", None),
+                                   "transformer_tokenizer", None)
         chunks = _chunk_text_for_gliner(text, tokenizer=gliner_tokenizer)
         if not chunks:
             return evidence
@@ -208,13 +214,12 @@ def gliner_evidence(text: str, targets: Optional[List[str]] = None) -> List[Any]
                 seen_spans.add(key)
 
                 # Use GLiNER's confidence score directly for precision-focused filtering
-                gliner_confidence = pred.get("score", 0.55)
                 evidence.append(Evidence(
                     start=start,
                     end=end,
                     label=label,
                     source="gliner",
-                    confidence=gliner_confidence,  # High-confidence GLiNER scores
+                    confidence=pred.get("score", 0.55),  # High-confidence GLiNER scores
                 ))
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.warning("GLiNER detection failed: %s", e)
