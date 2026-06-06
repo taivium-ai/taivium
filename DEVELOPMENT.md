@@ -62,6 +62,8 @@ PYTHONPATH=src pytest tests/
 1. Collect detector evidence via adaptive routing:
   - Fast track (`len(text) < 100`): `regex_evidence` (includes structured field detection) + `spacy_evidence`
   - Context track (`len(text) >= 100`): `regex_evidence` (includes structured field detection) + `gliner_evidence`
+    - `gliner_evidence` chunks inputs over 384 tokens with overlap and processes
+      chunks in batches before offset remapping/deduplication
   - Optional layers: `org_list_evidence`, `transformer_evidence`, `llm_evidence`
 2. Canonicalize spans (`canonicalize_spans`) — sweep-line overlap-cluster grouping produces one canonical entity per non-overlapping cluster via weighted label vote and longest-span selection
 2b. Find semantic recurrences (`find_recurrences`) — add repeated surface-form mentions of canonical entities missed by NER for recurrence-eligible entities only (token-boundary safe, non-overlapping; avoids ambiguous short PERSON/LOCATION/acronym cloning)

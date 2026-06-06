@@ -319,6 +319,133 @@ class TestGlinerEvidence:
         result = eng.gliner_evidence(text, targets=["ORG"])
         assert isinstance(result, list)
 
+    def test_chunk_text_for_gliner_shorter_than_max_tokens(self):
+        """Text shorter than max token window should remain a single chunk."""
+        token_count = eng._GLINER_MAX_TOKENS - 1
+        text = " ".join(f"tok{i}" for i in range(token_count))
+
+        chunks = eng._chunk_text_for_gliner(text)
+
+        assert len(chunks) == 1
+        assert chunks[0][0] == 0
+        assert chunks[0][1] == text
+
+    def test_chunk_text_for_gliner_equal_max_tokens(self):
+        """Text exactly at max token window should remain a single chunk."""
+        token_count = eng._GLINER_MAX_TOKENS
+        text = " ".join(f"tok{i}" for i in range(token_count))
+
+        chunks = eng._chunk_text_for_gliner(text)
+
+        assert len(chunks) == 1
+        assert chunks[0][0] == 0
+        assert chunks[0][1] == text
+
+    def test_chunk_text_for_gliner_just_longer_than_max_tokens(self):
+        """Text just over max token window should split into multiple chunks."""
+        token_count = eng._GLINER_MAX_TOKENS + 1
+        text = " ".join(f"tok{i}" for i in range(token_count))
+
+        chunks = eng._chunk_text_for_gliner(text)
+
+        assert len(chunks) == 2
+        assert chunks[0][0] == 0
+        assert chunks[0][1].startswith("tok0")
+        assert chunks[1][0] > 0
+
+    def test_chunk_text_for_gliner_token_count_equals_batch_size(self):
+        """Token count equal to batch size should still be a single chunk."""
+        token_count = eng._GLINER_BATCH_SIZE
+        text = " ".join(f"tok{i}" for i in range(token_count))
+
+        chunks = eng._chunk_text_for_gliner(text)
+
+        assert len(chunks) == 1
+        assert chunks[0][0] == 0
+        assert chunks[0][1] == text
+
+    def test_chunk_text_for_gliner_token_count_twice_batch_size(self):
+        """Token count twice batch size should still be a single chunk."""
+        token_count = eng._GLINER_BATCH_SIZE * 2
+        text = " ".join(f"tok{i}" for i in range(token_count))
+
+        chunks = eng._chunk_text_for_gliner(text)
+
+        assert len(chunks) == 1
+        assert chunks[0][0] == 0
+        assert chunks[0][1] == text
+
+    def test_chunk_text_for_gliner_non_edge_multi_chunk_flow(self):
+        """Typical long text should create stable overlapping chunks."""
+        token_count = 1000
+        text = " ".join(f"tok{i}" for i in range(token_count))
+
+        chunks = eng._chunk_text_for_gliner(text)
+
+        assert len(chunks) == 3
+        assert all(len(chunk_text.split()) <= eng._GLINER_MAX_TOKENS for _, chunk_text in chunks)
+        assert [offset for offset, _ in chunks] == sorted(offset for offset, _ in chunks)
+
+        # Verify configured overlap continuity between adjacent chunks.
+        for i in range(len(chunks) - 1):
+            left_tokens = chunks[i][1].split()
+            right_tokens = chunks[i + 1][1].split()
+            assert left_tokens[-eng._GLINER_OVERLAP_TOKENS:] == right_tokens[:eng._GLINER_OVERLAP_TOKENS]
+
+    def test_gliner_evidence_chunks_text_over_384_tokens(self, monkeypatch):
+        """Long text should be split into multiple GLiNER chunks."""
+        call_count = 0
+
+        def fake_predict_entities(chunk_text, targets, threshold=0.55):
+            nonlocal call_count
+            del targets, threshold
+            call_count += 1
+            first_word = chunk_text.split()[0]
+            return [{"start": 0, "end": len(first_word), "label": "PERSON", "score": 0.9}]
+
+        mock_model = types.SimpleNamespace(predict_entities=fake_predict_entities)
+        monkeypatch.setattr(eng, "get_gliner_model", lambda: mock_model)
+
+        long_text = " ".join(f"tok{i}" for i in range(420))
+        result = eng.gliner_evidence(long_text)
+
+        assert call_count > 1
+        assert len(result) == call_count
+        assert result[0].start == 0
+        assert any(ev.start > 0 for ev in result)
+
+    def test_gliner_evidence_uses_batch_predict_when_available(self, monkeypatch):
+        """Use batch_predict_entities when model supports it."""
+        batch_calls = 0
+
+        def fake_batch_predict_entities(batch_texts, targets, threshold=0.55):
+            nonlocal batch_calls
+            del targets, threshold
+            batch_calls += 1
+            preds = []
+            for chunk_text in batch_texts:
+                first_word = chunk_text.split()[0]
+                preds.append([
+                    {"start": 0, "end": len(first_word), "label": "PERSON", "score": 0.9}
+                ])
+            return preds
+
+        def fail_predict_entities(*args, **kwargs):
+            raise AssertionError("predict_entities should not be called when batch API exists")
+
+        mock_model = types.SimpleNamespace(
+            batch_predict_entities=fake_batch_predict_entities,
+            predict_entities=fail_predict_entities,
+        )
+        monkeypatch.setattr(eng, "get_gliner_model", lambda: mock_model)
+
+        long_text = " ".join(f"tok{i}" for i in range(420))
+        result = eng.gliner_evidence(long_text)
+
+        assert batch_calls >= 1
+        assert len(result) >= 2
+        assert all(ev.source == "gliner" for ev in result)
+
     def test_gliner_evidence_multiple_occurrences(self):
         """gliner_evidence() should detect multiple entity occurrences in text."""
         text = """

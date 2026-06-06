@@ -76,6 +76,10 @@ Taivium routes detector execution by payload length to balance latency and conte
 - Fast Track (`len(text) < 100`): `regex_evidence` + `spacy_evidence`
 - Context Track (`len(text) >= 100`): `regex_evidence` + `gliner_evidence`
 
+For long context payloads, `gliner_evidence` automatically chunks inputs larger
+than 384 tokens with overlap and runs chunk inference in batches, then remaps
+entity spans back to original text offsets.
+
 This keeps short structured inputs on a lightweight path while reserving GLiNER for
 long narrative text where contextual entity resolution matters most.
 
