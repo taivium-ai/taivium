@@ -44,6 +44,8 @@ source .venv/bin/activate
 pip install -r requirements.txt
 pip install -r requirements-test.txt
 python -m spacy download en_core_web_sm
+# Optional: override pinned GLiNER model snapshot revision
+# export TAIVIUM_GLINER_REVISION=8142fb00740ccea973e64b1272949ff48653df5e
 ```
 
 ## Running Tests

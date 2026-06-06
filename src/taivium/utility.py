@@ -56,6 +56,8 @@ def get_gliner_model():
 
     Uses the ONNX-quantized model from onnx-community/gliner_small-v2.1 to achieve
     significantly faster inference (5-10x) compared to full transformer weights.
+    The Hugging Face snapshot is revision-pinned by default for supply-chain
+    safety and can be overridden with ``TAIVIUM_GLINER_REVISION``.
 
     On M2/M3, prefers CoreML provider (GPU + Neural Engine).
     Falls back to CUDA on NVIDIA, then CPU.
@@ -95,9 +97,16 @@ def get_gliner_model():
         logger.info("Selected ONNX provider: %s", selected_provider)
 
         # 3. Download the ONNX model repository from HuggingFace Hub
+        # Pin revision for supply-chain safety (Bandit B615).
         repo_id = "onnx-community/gliner_small-v2.1"
-        logger.info("Downloading ONNX GLiNER model from %s", repo_id)
-        local_dir = snapshot_download(repo_id=repo_id)
+        default_revision = "8142fb00740ccea973e64b1272949ff48653df5e"
+        revision = os.getenv("TAIVIUM_GLINER_REVISION", default_revision)
+        logger.info(
+            "Downloading ONNX GLiNER model from %s at revision %s",
+            repo_id,
+            revision,
+        )
+        local_dir = snapshot_download(repo_id=repo_id, revision=revision)
 
         # 4. Path to the quantized ONNX weights file
         onnx_model_file = os.path.join("onnx", "model_quantized.onnx")
