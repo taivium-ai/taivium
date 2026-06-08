@@ -1,0 +1,18 @@
+repos:
+  - repo: local
+    hooks:
+      - id: pylint
+        name: Run pylint on src/
+        entry: pylint
+        language: system
+        pass_filenames: true
+        files: ^src/.*\.py$
+        types: [python]
+
+      - id: pytest
+        name: Run pytest on tests/
+        entry: pytest -q
+        language: system
+        pass_filenames: true
+        files: ^tests/.*\.py$
+        types: [python]

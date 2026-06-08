@@ -117,6 +117,7 @@ def get_gliner_model():
             selected_provider,
         )
 
+
         # 5. Load GLiNER with explicit provider configuration
         model = GLiNER.from_pretrained(
             local_dir,

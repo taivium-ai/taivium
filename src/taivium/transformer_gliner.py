@@ -8,8 +8,17 @@ variable-length text inputs. This module handles texts longer than GLiNER's
 import logging
 from typing import Any, cast, Dict, List, Optional, Tuple
 from typing import TYPE_CHECKING
+import warnings
 
+from transformers.utils import logging as hf_logging
 from .utility import get_gliner_model
+
+def suppress_gliner_warnings_veified_by_tests():
+    """Suppress specific warnings from transformers and ONNX Runtime during GLiNER loading."""
+    warnings.filterwarnings("ignore", message=".*incorrect regex pattern.*fix_mistral_regex.*")
+    warnings.filterwarnings("ignore", message=".*no maximum length is provided.*")
+    hf_logging.set_verbosity_error()
+suppress_gliner_warnings_veified_by_tests()
 
 if TYPE_CHECKING:
     # This is only for type hints, won't cause circular import at runtime
