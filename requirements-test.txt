@@ -8,3 +8,6 @@ pylint==3.0.0
 fakeredis>=2.0.0
 matplotlib>=3.0.0
 pre-commit>=3.3.3
+datasets==4.8.5
+presidio_analyzer==2.2.362
+presidio_anonymizer==2.2.362
