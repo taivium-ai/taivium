@@ -3,15 +3,12 @@ Utility functions for Taivium.
 '''
 import os
 import logging
-import warnings
 from functools import lru_cache
 from typing import Any
 from huggingface_hub import snapshot_download
 from gliner import GLiNER
 import onnxruntime as rt
 import spacy
-
-from transformers.utils import logging as hf_logging
 
 logger = logging.getLogger("taivium.utility")
 
@@ -51,6 +48,7 @@ def _verify_onnx_provider(model: Any) -> str:  # pylint: disable=unused-argument
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.warning("Failed to verify ONNX provider: %s", e)
         return "CPUExecutionProvider (fallback)"
+
 
 @lru_cache(maxsize=1)
 def get_gliner_model():
@@ -120,11 +118,6 @@ def get_gliner_model():
         )
 
         # 5. Load GLiNER with explicit provider configuration
-
-        warnings.filterwarnings("ignore", message=".*incorrect regex pattern.*fix_mistral_regex.*")
-        warnings.filterwarnings("ignore", message=".*no maximum length is provided.*")
-        hf_logging.set_verbosity_error()
-
         model = GLiNER.from_pretrained(
             local_dir,
             load_onnx_model=True,
@@ -133,8 +126,6 @@ def get_gliner_model():
             trust_remote_code=True,
             providers=preferred_providers  # Use preferred provider order
         )
-
-        hf_logging.set_verbosity_warning()
 
         # 6. Verify actual provider in use (critical for confirming GPU acceleration)
         actual_provider = _verify_onnx_provider(model)
