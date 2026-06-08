@@ -20,6 +20,7 @@ import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Callable, cast, Dict, List, Optional, Tuple
 import os
 
@@ -32,6 +33,12 @@ from .utility import get_spacy_model
 
 logger = logging.getLogger("taivium.engine")
 
+try:
+    _TAIVIUM_VERSION = version("taivium")
+except PackageNotFoundError:
+    _TAIVIUM_VERSION = "0.0.0"
+logger.info("Taivium version: %s", _TAIVIUM_VERSION)
+print("Taivium version:", _TAIVIUM_VERSION)
 # -----------------------------
 # Policy Action and Risk Level Enums
 # -----------------------------
