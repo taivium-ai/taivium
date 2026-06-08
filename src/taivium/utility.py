@@ -134,6 +134,8 @@ def get_gliner_model():
             providers=preferred_providers  # Use preferred provider order
         )
 
+        hf_logging.set_verbosity_warning()
+
         # 6. Verify actual provider in use (critical for confirming GPU acceleration)
         actual_provider = _verify_onnx_provider(model)
         logger.info(
