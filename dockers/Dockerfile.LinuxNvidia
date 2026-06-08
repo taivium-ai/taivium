@@ -1,0 +1,18 @@
+FROM pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime
+
+# Install onnxruntime-gpu
+RUN pip install onnxruntime-gpu==1.28.1
+
+# Set working directory
+WORKDIR /app
+
+# Copy source code
+COPY . .
+
+# Install requirements and package
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir -e .
+
+
+
+

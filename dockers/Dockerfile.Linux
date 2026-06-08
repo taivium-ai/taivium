@@ -1,0 +1,36 @@
+FROM python:3.11-slim
+
+# Prevent interactive prompts + optimize Python behavior
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# System dependencies (minimal but safe for ML libs)
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Upgrade pip
+RUN pip install --no-cache-dir --upgrade pip
+
+# Install CPU-only PyTorch
+RUN pip install --no-cache-dir \
+    torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+# Install ONNX Runtime CPU (IMPORTANT: not GPU version)
+RUN pip install --no-cache-dir onnxruntime==1.18.1
+
+# Set working directory
+WORKDIR /app
+
+# Copy project
+COPY . .
+
+# Install project dependencies
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir -e .
+
+# Default command
+CMD ["python", "main.py"]
