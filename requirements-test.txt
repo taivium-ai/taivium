@@ -7,3 +7,4 @@ pylint==3.0.0
 # Redis test double (no real Redis server needed in tests)
 fakeredis>=2.0.0
 matplotlib>=3.0.0
+pre-commit>=3.3.3
