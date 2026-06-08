@@ -38,7 +38,7 @@ try:
 except PackageNotFoundError:
     _TAIVIUM_VERSION = "0.0.0"
 logger.info("Taivium version: %s", _TAIVIUM_VERSION)
-print("Taivium version:", _TAIVIUM_VERSION)
+
 # -----------------------------
 # Policy Action and Risk Level Enums
 # -----------------------------
@@ -1643,6 +1643,18 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         self.spacy_model_name = model_name or spacy_model_name
         self.short_text_threshold = _normalize_short_text_threshold(short_text_threshold)
         self.latency_history: List[float] = []  # Stores recent processing latencies in milliseconds
+
+        try:
+            from . import __commit__ as _TAIVIUM_COMMIT
+        except Exception:
+            _TAIVIUM_COMMIT = "unknown"
+
+        logger.info(
+            "Taivium version %s commit %s initialized",
+            _TAIVIUM_VERSION,
+            _TAIVIUM_COMMIT,
+        )
+        print("Taivium version:", _TAIVIUM_VERSION, "commit:", _TAIVIUM_COMMIT)
 
     # pylint: disable=too-many-locals
     def process(self, text: str, known_orgs: Optional[List[str]] = None) -> Dict[str, Any]:
