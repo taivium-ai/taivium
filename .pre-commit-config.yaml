@@ -10,9 +10,8 @@ repos:
         types: [python]
 
       - id: pytest
-        name: Run pytest on tests/
+        name: Run pytest
         entry: pytest -q
         language: system
-        pass_filenames: true
-        files: ^tests/.*\.py$
-        types: [python]
+        pass_filenames: false
+        files: \.py$
