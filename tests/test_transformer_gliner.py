@@ -835,4 +835,22 @@ class TestGlinerEvidence:
                 "Chunk text must match the original text at the reported character offset"
             assert len(chunk_text) > 0, "Chunk text should not be empty"
             assert 0 <= offset < len(text), "Chunk offset must lie within the original text range"
-    
+
+        result = gliner.gliner_evidence(text)
+        assert isinstance(result, list)
+
+        expected_names = {"John Smith", "Alice Johnson", "Maria Garcia"}
+        persons = [
+            ev for ev in result
+            if getattr(ev, "label", None) == "PERSON"
+            and getattr(ev, "source", None) == "gliner"
+        ]
+
+        assert persons, "Expected at least one PERSON entity from GLiNER"
+        for ev in persons:
+            span_text = text[ev.start:ev.end]
+            assert span_text in expected_names, (
+                f"PERSON entity span {span_text!r} at {ev.start}:{ev.end} does not match an expected name"
+            )
+        
+
