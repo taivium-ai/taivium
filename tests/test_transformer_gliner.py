@@ -293,6 +293,8 @@ class TestGlinerEvidence:
             assert chunk_token_count <= gliner._GLINER_MAX_TOKENS, \
                 f"Chunk {chunk_idx} of large text has {chunk_token_count} DeBERTa tokens, exceeds {gliner._GLINER_MAX_TOKENS}"
 
+        
+
     def test_chunk_text_for_gliner_requires_tokenizer(self):
         """_chunk_text_for_gliner should raise ValueError if tokenizer is None."""
         text = " ".join(f"tok{i}" for i in range(100))
@@ -791,3 +793,46 @@ class TestGlinerEvidence:
         
         assert len(result) == 1
         assert result[0].source == "gliner"
+
+    def test_gliner_evidence_very_long_text_detects_entity(self):
+        """Very long text should still yield detected PERSON entity."""
+        text = "John Smith lives in New York. " * 2000
+        result = gliner.gliner_evidence(text)
+        assert isinstance(result, list)
+
+        persons = [
+            ev for ev in result
+            if getattr(ev, "label", None) == "PERSON" and getattr(ev, "source", None) == "gliner"
+        ]
+        assert persons, "Expected at least one PERSON from GLiNER"
+
+        expected_name = "John Smith"
+        assert any(text[ev.start:ev.end] == expected_name for ev in persons), \
+            "No PERSON evidence maps to the exact 'John Smith' substring"
+
+        sentence = "John Smith lives in New York. "
+        sentence_length = len(sentence)
+        assert any(ev.start % sentence_length == 0 for ev in persons), \
+            "PERSON start offsets should align with repeated sentence boundaries"
+
+    def test_chunk_text_for_gliner_preserves_exact_text(self):
+        """_chunk_text_for_gliner should preserve the exact original text for each chunk."""
+        from taivium.utility import get_gliner_model
+        model = get_gliner_model()
+        tokenizer = model.data_processor.transformer_tokenizer
+
+        text = (
+            "John Smith lives in New York. "
+            "Alice Johnson visited Tokyo last week. "
+            "Maria Garcia traveled to Paris for a meeting. "
+        ) * 80
+
+        chunks = gliner._chunk_text_for_gliner(text, tokenizer=tokenizer)
+        assert chunks, "Expected _chunk_text_for_gliner to return at least one chunk"
+
+        for offset, chunk_text in chunks:
+            assert text[offset:offset + len(chunk_text)] == chunk_text, \
+                "Chunk text must match the original text at the reported character offset"
+            assert len(chunk_text) > 0, "Chunk text should not be empty"
+            assert 0 <= offset < len(text), "Chunk offset must lie within the original text range"
+    
