@@ -68,12 +68,12 @@ def _evaluate_single_sample(task):
         mp.current_process().name,
     )
 
-def taivium_detection(text, allowed_labels, model_name="en_core_web_sm"):
+def taivium_detection(text, allowed_labels, model_name="en_core_web_sm", use_gliner=True):
     '''Detect entities in text using Taivium. Returns a set of (start, end, label) spans.'''
     # Load engine per model only once, reuse on subsequent calls
     if model_name not in _taivium_engines:
         print(f"Loading Taivium engine for evaluation with spaCy model: {model_name}")
-        _taivium_engines[model_name] = Taivium(spacy_model_name=model_name)
+        _taivium_engines[model_name] = Taivium(spacy_model_name=model_name, use_gliner=use_gliner)
     engine = _taivium_engines[model_name]
     result = engine.process(text)
     pred_spans = set()
@@ -141,7 +141,8 @@ def presidio_detection(text, allowed_labels, model_name="en_core_web_lg"):
 
 
 def evaluation(detection, dataset, comparable_golds, allowed_labels,
-                     max_errors, model_name="en_core_web_lg", shared_cache_name=None,
+                     max_errors, model_name="en_core_web_lg", use_gliner=True,
+                     shared_cache_name=None,
                      workers=None, chunksize=64, show_worker_progress=False):
     '''Evaluate NER performance on the dataset. 
     Returns TP, FP, FN counts and error samples.'''
@@ -234,7 +235,8 @@ def evaluation(detection, dataset, comparable_golds, allowed_labels,
             )
 
         for idx, (text, comparable_gold) in iter_rows:
-            pred_spans = detection(text, allowed_labels, model_name=model_name)
+            pred_spans = detection(text, allowed_labels, 
+                                   model_name=model_name, use_gliner=use_gliner)
             fp_set = pred_spans - comparable_gold
             fn_set = comparable_gold - pred_spans
             tp += len(pred_spans & comparable_gold)

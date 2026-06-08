@@ -181,7 +181,8 @@ def main() -> None:
 
     settings_results = [
         # {"metrics": {}, "detection_func": presidio_detection, "spacy_model_name": "en_core_web_lg"},
-        {"metrics": {}, "detection_func": taivium_detection, "spacy_model_name": "en_core_web_sm"},
+        # {"metrics": {}, "detection_func": taivium_detection, "spacy_model_name": "en_core_web_sm", "use_gliner": True},
+        {"metrics": {}, "detection_func": taivium_detection, "spacy_model_name": "en_core_web_sm", "use_gliner": True},
         # {"metrics": {}, "detection_func": taivium_detection, "spacy_model_name": "en_core_web_lg"},
     ]
 
@@ -225,16 +226,13 @@ def main() -> None:
                     print(f"  ⚠ Could not load cached results for {detection_name}: {e}")
             else:
                 print(f"  ⚠ No cached results found for {detection_name}")
-
-        # Only run Taivium detection
-        detections_to_run = [settings_results[2]]
-        print("  Running only: taivium_detection\n")
     
     for _, detection_settings_result in tqdm.tqdm(
         enumerate(detections_to_run), total=len(detections_to_run)
     ):
         detection = detection_settings_result["detection_func"]
         model_name = detection_settings_result["spacy_model_name"]
+        use_gliner = detection_settings_result.get("use_gliner", True)
         metrics, errors, cache_file, total_time, n_samples = evaluation(
             detection,
             dataset,
@@ -242,6 +240,7 @@ def main() -> None:
             allowed_labels,
             args.max_errors,
             model_name=model_name,
+            use_gliner=use_gliner,
             shared_cache_name=run_cache_name,
             workers=args.workers,
             show_worker_progress=not args.no_worker_progress,

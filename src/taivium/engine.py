@@ -675,6 +675,7 @@ def collect_evidence(  # pylint: disable=too-many-arguments
     known_orgs: Optional[List[str]] = None,
     spacy_model_name: str = "en_core_web_sm",
     short_text_threshold: int = DEFAULT_SHORT_TEXT_THRESHOLD,
+    use_gliner: bool = True,
     use_transformer: bool = False,
     use_llm: bool = False,
     transformer_fn: Optional[Callable[[str], List[Evidence]]] = None,
@@ -700,6 +701,7 @@ def collect_evidence(  # pylint: disable=too-many-arguments
         short_text_threshold: Character threshold controlling adaptive routing.
             Inputs shorter than this value use the fast route (regex + spaCy),
             while longer inputs use the context route (regex + GLiNER).
+        use_gliner: Whether to use GLiNER for context-aware NER on longer texts. Enabled by default.
         use_transformer: Master switch for the transformer detector layer. Must be
             ``True`` for the layer to run. When ``True`` and no *transformer_fn* is
             provided, uses the built-in BERT NER detector (requires
@@ -739,7 +741,11 @@ def collect_evidence(  # pylint: disable=too-many-arguments
             len(text),
             short_text_threshold,
         )
-        evidence += gliner_evidence(text, targets=["PERSON", "LOCATION", "ORGANIZATION"])
+        if use_gliner:
+            print("x" * 80)
+            evidence += gliner_evidence(text, targets=["PERSON", "LOCATION", "ORGANIZATION"])
+        else:
+            evidence += spacy_evidence(text, model_name=spacy_model_name)
 
     if use_transformer:
         evidence += (transformer_fn or transformer_evidence)(text)
@@ -1605,6 +1611,7 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         self,
         policy_engine: Optional[PolicyEngine] = None,
         session_store: Optional[SessionStore] = None,
+        use_gliner: bool = True,
         use_transformer: bool = False,
         use_llm: bool = False,
         transformer_fn: Optional[Callable[[str], List[Evidence]]] = None,
@@ -1629,6 +1636,7 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         self.session_store = (
             session_store if session_store is not None else InMemorySessionStore()
         )
+        self.use_gliner = use_gliner
         self.use_transformer = use_transformer
         self.use_llm = use_llm
         self.transformer_fn = transformer_fn
@@ -1673,6 +1681,7 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
             text,
             known_orgs=known_orgs,
             spacy_model_name=self.spacy_model_name,
+            use_gliner=self.use_gliner,
             short_text_threshold=self.short_text_threshold,
             use_transformer=self.use_transformer,
             use_llm=self.use_llm,
