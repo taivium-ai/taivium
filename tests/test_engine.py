@@ -5,7 +5,10 @@ import pytest
 import types
 import logging
 from taivium import engine as eng
-
+from taivium.engine import (
+    _resolve_short_text_threshold,
+    DEFAULT_SHORT_TEXT_THRESHOLD
+)
 # --- Weighted interval scheduling: prev_non_overlap logic ---
 def test_weighted_interval_prev_non_overlap():
     SpanCandidate = types.SimpleNamespace
@@ -363,3 +366,64 @@ class TestSkipUsernameCandidate:
     def test_whitespace_trim(self):
         assert _skip_username_candidate("  api_key  ") is True
         assert _skip_username_candidate("  john_doe  ") is False
+
+# ---------- Helpers ----------
+
+class DummyNormalize:
+    def __init__(self):
+        self.called_with = None
+
+    def __call__(self, value):
+        self.called_with = value
+        return value + 1  # simple deterministic transform
+
+
+# ---------- Tests ----------
+
+def test_valid_int_calls_normalize(monkeypatch):
+    dummy = DummyNormalize()
+
+    monkeypatch.setattr(
+        "taivium.engine._normalize_short_text_threshold",
+        dummy,
+    )
+
+    result = _resolve_short_text_threshold({"short_text_threshold": 50})
+
+    assert dummy.called_with == 50
+    assert result == 51
+
+
+def test_string_number_casts_to_int(monkeypatch):
+    monkeypatch.setattr(
+        "taivium.engine._normalize_short_text_threshold",
+        lambda x: x,
+    )
+
+    result = _resolve_short_text_threshold({"short_text_threshold": "42"})
+
+    assert result == 42
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    ["invalid", None, object()],
+)
+def test_invalid_values_fallback_and_log(caplog, bad_value):
+    caplog.set_level("WARNING")
+
+    result = _resolve_short_text_threshold({"short_text_threshold": bad_value})
+
+    assert result == DEFAULT_SHORT_TEXT_THRESHOLD
+    assert "Invalid short_text_threshold" in caplog.text
+
+
+def test_missing_key_uses_default_and_normalizes(monkeypatch):
+    monkeypatch.setattr(
+        "taivium.engine._normalize_short_text_threshold",
+        lambda x: x + 5,
+    )
+
+    result = _resolve_short_text_threshold({})
+
+    assert result == DEFAULT_SHORT_TEXT_THRESHOLD + 5
