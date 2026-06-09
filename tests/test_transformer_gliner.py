@@ -854,3 +854,26 @@ class TestGlinerEvidence:
             )
         
 
+class BrokenTokenizer:
+    def __init__(self, exc):
+        self.exc = exc
+
+    def __call__(self, *args, **kwargs):
+        raise self.exc
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        AttributeError("attr error"),
+        TypeError("type error"),
+        KeyError("key error"),
+    ],
+)
+def test_chunk_text_for_gliner_all_tokenizer_errors(error):
+    tokenizer = BrokenTokenizer(error)
+    from taivium.transformer_gliner import _chunk_text_for_gliner
+    with pytest.raises(RuntimeError) as exc_info:
+        _chunk_text_for_gliner("some text", tokenizer=tokenizer)
+
+    assert "DeBERTa tokenizer failed unexpectedly" in str(exc_info.value)
