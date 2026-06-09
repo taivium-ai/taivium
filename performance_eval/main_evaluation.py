@@ -180,10 +180,8 @@ def main() -> None:
     print(f"Label distribution saved to: {_dist_path}")
 
     settings_results = [
-        # {"metrics": {}, "detection_func": presidio_detection, "spacy_model_name": "en_core_web_lg"},
-        # {"metrics": {}, "detection_func": taivium_detection, "spacy_model_name": "en_core_web_sm", "use_gliner": True},
         {"metrics": {}, "detection_func": taivium_detection, "spacy_model_name": "en_core_web_sm", "use_gliner": True},
-        # {"metrics": {}, "detection_func": taivium_detection, "spacy_model_name": "en_core_web_lg"},
+        {"metrics": {}, "detection_func": taivium_detection, "spacy_model_name": "en_core_web_sm", "use_gliner": False},
     ]
 
     # Determine which detections to run
