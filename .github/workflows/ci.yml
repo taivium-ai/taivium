@@ -65,6 +65,7 @@ jobs:
       # --- TESTING & COVERAGE GENERATION ---
       - name: Run tests with coverage
         run: |
+          set -o pipefail
           python -m coverage run -m pytest tests/ -q -s -vv | tee pytest.log
           # Generate XML report explicitly for Codecov compatibility
           python -m coverage xml -o coverage.xml
