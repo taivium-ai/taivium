@@ -65,7 +65,7 @@ jobs:
       # --- TESTING & COVERAGE GENERATION ---
       - name: Run tests with coverage
         run: |
-          python -m coverage run -m pytest tests/ -q
+          python -m coverage run -m pytest tests/ -q -s -vv | tee pytest.log
           # Generate XML report explicitly for Codecov compatibility
           python -m coverage xml -o coverage.xml
           # Run the console report verification step
@@ -73,6 +73,12 @@ jobs:
             --include="src/taivium/*" \
             --show-missing \
             --fail-under=90
+
+      - name: Upload pytest logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-logs
+          path: pytest.log
       # --- UPLOAD TO CODECOV ---
       # Runs on Python 3.13 unless the workflow was completely cancelled via UI
       - name: Upload coverage to Codecov
