@@ -439,6 +439,22 @@ def spacy_evidence(text: str, model_name: str = "en_core_web_sm") -> List[Eviden
 
     return evidence
 
+def skip_username_candidate(candidate: str) -> bool:
+    '''Determines if a USERNAME candidate should be skipped based on heuristics.
+    This helps reduce false positives by excluding patterns that are unlikely to be usernames.'''
+    cand = candidate.strip()
+    low = cand.lower()
+    # Do not steal API keys or API-key field names.
+    if low.startswith("sk-") or low in {"api_key", "api-key", "apikey"}:
+        return True
+    # Exclude placeholder tokens and emails.
+    if "@" in cand or _PLACEHOLDER_RE.match(cand):
+        return True
+    # Exclude all-caps field-like tokens (e.g., API_KEY, USER_NAME).
+    if cand.upper() == cand and not any(ch.isdigit() for ch in cand):
+        return True
+    return False
+
 # pylint: disable=too-many-locals,too-many-branches,too-many-statements
 def regex_evidence(text: str) -> List[Evidence]:
     """
@@ -488,20 +504,6 @@ def regex_evidence(text: str) -> List[Evidence]:
     _username_full_scan = len(text) <= 800
     _username_seen_spans: set[tuple[int, int]] = set()
 
-    def _skip_username_candidate(candidate: str) -> bool:
-        cand = candidate.strip()
-        low = cand.lower()
-        # Do not steal API keys or API-key field names.
-        if low.startswith("sk-") or low in {"api_key", "api-key", "apikey"}:
-            return True
-        # Exclude placeholder tokens and emails.
-        if "@" in cand or _PLACEHOLDER_RE.match(cand):
-            return True
-        # Exclude all-caps field-like tokens (e.g., API_KEY, USER_NAME).
-        if cand.upper() == cand and not any(ch.isdigit() for ch in cand):
-            return True
-        return False
-
     def _is_email_local_part(end_idx: int) -> bool:
         # Matches like "username: localpart@example.com" should remain EMAIL only.
         return end_idx < len(text) and text[end_idx] == "@"
@@ -509,7 +511,7 @@ def regex_evidence(text: str) -> List[Evidence]:
     if _username_context_scan:
         for m in USERNAME_CONTEXT_REGEX.finditer(text):
             candidate = m.group(1)
-            if _skip_username_candidate(candidate) or _is_email_local_part(m.end(1)):
+            if skip_username_candidate(candidate) or _is_email_local_part(m.end(1)):
                 continue
             span = (m.start(1), m.end(1))
             if span not in _username_seen_spans:
@@ -519,7 +521,7 @@ def regex_evidence(text: str) -> List[Evidence]:
     if _username_full_scan:
         for m in USERNAME_REGEX.finditer(text):
             candidate = m.group(0)
-            if _skip_username_candidate(candidate) or _is_email_local_part(m.end()):
+            if skip_username_candidate(candidate) or _is_email_local_part(m.end()):
                 continue
             span = (m.start(), m.end())
             if span not in _username_seen_spans:
@@ -528,7 +530,7 @@ def regex_evidence(text: str) -> List[Evidence]:
 
         for m in USERNAME_OPAQUE_REGEX.finditer(text):
             candidate = m.group(0)
-            if _skip_username_candidate(candidate) or _is_email_local_part(m.end()):
+            if skip_username_candidate(candidate) or _is_email_local_part(m.end()):
                 continue
             span = (m.start(), m.end())
             if span not in _username_seen_spans:

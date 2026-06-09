@@ -304,3 +304,62 @@ def test_latency_history_trimmed():
 
 # --- GLiNER Evidence Collection Tests ---
 
+from taivium.engine import skip_username_candidate as _skip_username_candidate
+
+class TestSkipUsernameCandidate:
+    """Tests for _skip_username_candidate."""
+
+    # --- API key patterns ---
+    def test_sk_prefix(self):
+        assert _skip_username_candidate("sk-123456") is True
+
+    def test_api_key_variants(self):
+        assert _skip_username_candidate("api_key") is True
+        assert _skip_username_candidate("api-key") is True
+        assert _skip_username_candidate("apikey") is True
+
+    def test_api_key_case_insensitive(self):
+        assert _skip_username_candidate("API_KEY") is True
+        assert _skip_username_candidate("Api-Key") is True
+
+    # --- Email detection ---
+    def test_email_candidate(self):
+        assert _skip_username_candidate("user@example.com") is True
+
+    # --- Placeholder regex ---
+    def test_placeholder_token(self, monkeypatch):
+        import re
+        from taivium import engine
+
+        monkeypatch.setattr(
+            engine,
+            "_PLACEHOLDER_RE",
+            re.compile(r"\{\{.*\}\}")
+        )
+
+        assert _skip_username_candidate("{{username}}") is True
+
+    # --- All caps field-like tokens ---
+    def test_all_caps_no_digits(self):
+
+        assert _skip_username_candidate("USERNAME") is True
+        assert _skip_username_candidate("APIKEY") is True
+
+    def test_all_caps_with_digits_not_skipped(self):
+        # digits make it pass this filter
+        assert _skip_username_candidate("USER123") is False
+
+    # --- Valid usernames (should NOT skip) ---
+    def test_valid_username_lowercase(self):
+        assert _skip_username_candidate("john_doe") is False
+
+    def test_valid_username_mixed_case(self):
+        assert _skip_username_candidate("JohnDoe") is False
+
+    def test_valid_username_with_numbers(self):
+        assert _skip_username_candidate("user123") is False
+
+    # --- Whitespace handling ---
+    def test_whitespace_trim(self):
+        assert _skip_username_candidate("  api_key  ") is True
+        assert _skip_username_candidate("  john_doe  ") is False

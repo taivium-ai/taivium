@@ -1,7 +1,6 @@
 '''
 Unit tests for taivium.utility module.'''
 import pytest
-from taivium import engine as eng
 from taivium import utility as utility
 
 # --- GLiNER Model Caching Tests ---
@@ -44,3 +43,189 @@ def test_verify_onnx_provider_exception_fallback(monkeypatch):
     monkeypatch.setattr(utility.rt, "get_available_providers", bad_get_available_providers)
     result = utility._verify_onnx_provider(BadModel())
     assert result == "CPUExecutionProvider (fallback)"
+
+# --- _verify_onnx_provider provider selection paths ---
+def test_verify_onnx_provider_coreml(monkeypatch):
+    monkeypatch.setattr(
+        utility.rt,
+        "get_available_providers",
+        lambda: ["CoreMLExecutionProvider", "CPUExecutionProvider"],
+    )
+    result = utility._verify_onnx_provider(object())
+    assert result == "CoreMLExecutionProvider"
+
+
+def test_verify_onnx_provider_cuda(monkeypatch):
+    monkeypatch.setattr(
+        utility.rt,
+        "get_available_providers",
+        lambda: ["CUDAExecutionProvider", "CPUExecutionProvider"],
+    )
+    result = utility._verify_onnx_provider(object())
+    assert result == "CUDAExecutionProvider"
+
+
+def test_verify_onnx_provider_cpu(monkeypatch):
+    monkeypatch.setattr(
+        utility.rt,
+        "get_available_providers",
+        lambda: ["CPUExecutionProvider"],
+    )
+    result = utility._verify_onnx_provider(object())
+    assert result == "CPUExecutionProvider"
+
+
+# --- get_gliner_model provider selection logic ---
+def test_get_gliner_model_coreml_selected(monkeypatch):
+    utility.get_gliner_model.cache_clear()
+
+    monkeypatch.setattr(
+        utility.rt,
+        "get_available_providers",
+        lambda: ["CoreMLExecutionProvider", "CPUExecutionProvider"],
+    )
+
+    monkeypatch.setattr(utility, "snapshot_download", lambda **k: "/tmp/model")
+
+    class DummyModel:
+        def predict_entities(self): pass
+
+    monkeypatch.setattr(
+        utility.GLiNER,
+        "from_pretrained",
+        lambda *a, **k: DummyModel(),
+    )
+
+    monkeypatch.setattr(
+        utility, "_verify_onnx_provider", lambda m: "CoreMLExecutionProvider"
+    )
+
+    model = utility.get_gliner_model()
+    assert hasattr(model, "predict_entities")
+
+
+def test_get_gliner_model_cuda_selected(monkeypatch):
+    utility.get_gliner_model.cache_clear()
+
+    monkeypatch.setattr(
+        utility.rt,
+        "get_available_providers",
+        lambda: ["CUDAExecutionProvider"],
+    )
+
+    monkeypatch.setattr(utility, "snapshot_download", lambda **k: "/tmp/model")
+
+    class DummyModel:
+        def predict_entities(self): pass
+
+    monkeypatch.setattr(
+        utility.GLiNER,
+        "from_pretrained",
+        lambda *a, **k: DummyModel(),
+    )
+
+    monkeypatch.setattr(
+        utility, "_verify_onnx_provider", lambda m: "CUDAExecutionProvider"
+    )
+
+    model = utility.get_gliner_model()
+    assert hasattr(model, "predict_entities")
+
+
+# --- mismatch warning path ---
+def test_get_gliner_model_provider_mismatch(monkeypatch):
+    utility.get_gliner_model.cache_clear()
+
+    monkeypatch.setattr(
+        utility.rt,
+        "get_available_providers",
+        lambda: ["CUDAExecutionProvider"],
+    )
+
+    monkeypatch.setattr(utility, "snapshot_download", lambda **k: "/tmp/model")
+
+    class DummyModel:
+        def predict_entities(self): pass
+
+    monkeypatch.setattr(
+        utility.GLiNER,
+        "from_pretrained",
+        lambda *a, **k: DummyModel(),
+    )
+
+    # Force mismatch
+    monkeypatch.setattr(
+        utility, "_verify_onnx_provider", lambda m: "CPUExecutionProvider"
+    )
+
+    model = utility.get_gliner_model()
+    assert hasattr(model, "predict_entities")
+
+
+# --- onnxruntime ImportError fallback ---
+def test_get_gliner_model_no_onnxruntime(monkeypatch):
+    utility.get_gliner_model.cache_clear()
+
+    def raise_import_error():
+        raise ImportError()
+
+    monkeypatch.setattr(
+        utility.rt,
+        "get_available_providers",
+        lambda: raise_import_error(),
+    )
+
+    monkeypatch.setattr(utility, "snapshot_download", lambda **k: "/tmp/model")
+
+    class DummyModel:
+        def predict_entities(self): pass
+
+    monkeypatch.setattr(
+        utility.GLiNER,
+        "from_pretrained",
+        lambda *a, **k: DummyModel(),
+    )
+
+    monkeypatch.setattr(
+        utility, "_verify_onnx_provider", lambda m: "CPUExecutionProvider"
+    )
+
+    model = utility.get_gliner_model()
+    assert hasattr(model, "predict_entities")
+
+
+# --- ONNX failure fallback to transformer ---
+def test_get_gliner_model_fallback_to_transformer(monkeypatch):
+    utility.get_gliner_model.cache_clear()
+
+    monkeypatch.setattr(
+        utility.rt,
+        "get_available_providers",
+        lambda: ["CPUExecutionProvider"],
+    )
+
+    monkeypatch.setattr(
+        utility, "snapshot_download", lambda **k: "/tmp/model"
+    )
+
+    def raise_error(*a, **k):
+        raise RuntimeError("ONNX load failed")
+
+    monkeypatch.setattr(utility.GLiNER, "from_pretrained", raise_error)
+
+    class FallbackModel:
+        def predict_entities(self): pass
+
+    # Second call (fallback)
+    def fallback_loader(model_name):
+        assert model_name == "knowledgator/gliner-pii-small-v1.0"
+        return FallbackModel()
+
+    monkeypatch.setattr(
+        utility.GLiNER,
+        "from_pretrained",
+        lambda *a, **k: raise_error() if "onnx" in str(a) else fallback_loader(a[0]),
+    )
+
+    model = utility.get_gliner_model()
+    assert hasattr(model, "predict_entities")
