@@ -742,7 +742,6 @@ def collect_evidence(  # pylint: disable=too-many-arguments
             short_text_threshold,
         )
         if use_gliner:
-            print("x" * 80)
             evidence += gliner_evidence(text, targets=["PERSON", "LOCATION", "ORGANIZATION"])
         else:
             evidence += spacy_evidence(text, model_name=spacy_model_name)
