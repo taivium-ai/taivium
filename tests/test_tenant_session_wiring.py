@@ -1,16 +1,9 @@
 """Tests for per-request tenant-aware session store wiring."""
 import json
-import logging
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 from taivium import engine as eng
-from taivium.session_store import (
-    InMemorySessionStore,
-    RedisSessionStore,
-    _build_tenant_session_store,
-    _resolve_default_session_ttl,
-    _resolve_tenant_session_ttl,
-)
+from taivium.session_store import InMemorySessionStore
 
 
 def test_module_engine_process_with_tenant_id_no_redis(monkeypatch):
@@ -76,11 +69,11 @@ def test_module_engine_process_with_tenant_id_and_redis(monkeypatch):
         """Mock get_all to satisfy session store interface."""
         return dict(self._data)
     
-    with patch.object(RedisSessionStore, '__init__', mock_redis_store_init):
-        with patch.object(RedisSessionStore, 'get', mock_redis_store_get):
-            with patch.object(RedisSessionStore, 'set', mock_redis_store_set):
-                with patch.object(RedisSessionStore, 'set_many', mock_redis_store_set_many):
-                    with patch.object(RedisSessionStore, 'get_all', mock_redis_store_get_all):
+    with patch.object(eng.RedisSessionStore, '__init__', mock_redis_store_init):
+        with patch.object(eng.RedisSessionStore, 'get', mock_redis_store_get):
+            with patch.object(eng.RedisSessionStore, 'set', mock_redis_store_set):
+                with patch.object(eng.RedisSessionStore, 'set_many', mock_redis_store_set_many):
+                    with patch.object(eng.RedisSessionStore, 'get_all', mock_redis_store_get_all):
                         # Call process with tenant_id
                         result = eng.module_engine_process(
                             "My name is John Doe",
@@ -162,11 +155,11 @@ def test_module_engine_process_different_tenants_get_different_stores(monkeypatc
     def mock_get_all(self):
         return {}
     
-    with patch.object(RedisSessionStore, '__init__', mock_redis_init):
-        with patch.object(RedisSessionStore, 'get', mock_get):
-            with patch.object(RedisSessionStore, 'set', mock_set):
-                with patch.object(RedisSessionStore, 'set_many', mock_set_many):
-                    with patch.object(RedisSessionStore, 'get_all', mock_get_all):
+    with patch.object(eng.RedisSessionStore, '__init__', mock_redis_init):
+        with patch.object(eng.RedisSessionStore, 'get', mock_get):
+            with patch.object(eng.RedisSessionStore, 'set', mock_set):
+                with patch.object(eng.RedisSessionStore, 'set_many', mock_set_many):
+                    with patch.object(eng.RedisSessionStore, 'get_all', mock_get_all):
                         # Both calls should trigger RedisSessionStore creation with different tenant_ids
                         eng.module_engine_process("Text 1", options={"tenant_id": "tenant-1"})
                         eng.module_engine_process("Text 2", options={"tenant_id": "tenant-2"})
@@ -206,11 +199,11 @@ def test_module_engine_process_uses_tenant_specific_ttl_policy(monkeypatch):
     def mock_get_all(self):
         return {}
 
-    with patch.object(RedisSessionStore, '__init__', mock_redis_init):
-        with patch.object(RedisSessionStore, 'get', mock_get):
-            with patch.object(RedisSessionStore, 'set', mock_set):
-                with patch.object(RedisSessionStore, 'set_many', mock_set_many):
-                    with patch.object(RedisSessionStore, 'get_all', mock_get_all):
+    with patch.object(eng.RedisSessionStore, '__init__', mock_redis_init):
+        with patch.object(eng.RedisSessionStore, 'get', mock_get):
+            with patch.object(eng.RedisSessionStore, 'set', mock_set):
+                with patch.object(eng.RedisSessionStore, 'set_many', mock_set_many):
+                    with patch.object(eng.RedisSessionStore, 'get_all', mock_get_all):
                         eng.module_engine_process('Text 1', options={'tenant_id': 'tenant-acme'})
 
     assert captured_ttls
@@ -247,11 +240,11 @@ def test_module_engine_process_falls_back_to_default_ttl_when_tenant_missing(mon
     def mock_get_all(self):
         return {}
 
-    with patch.object(RedisSessionStore, '__init__', mock_redis_init):
-        with patch.object(RedisSessionStore, 'get', mock_get):
-            with patch.object(RedisSessionStore, 'set', mock_set):
-                with patch.object(RedisSessionStore, 'set_many', mock_set_many):
-                    with patch.object(RedisSessionStore, 'get_all', mock_get_all):
+    with patch.object(eng.RedisSessionStore, '__init__', mock_redis_init):
+        with patch.object(eng.RedisSessionStore, 'get', mock_get):
+            with patch.object(eng.RedisSessionStore, 'set', mock_set):
+                with patch.object(eng.RedisSessionStore, 'set_many', mock_set_many):
+                    with patch.object(eng.RedisSessionStore, 'get_all', mock_get_all):
                         eng.module_engine_process('Text 2', options={'tenant_id': 'tenant-other'})
 
     assert captured_ttls
@@ -262,7 +255,7 @@ def test_build_tenant_session_store_returns_in_memory_without_tenant(monkeypatch
     """Helper returns InMemorySessionStore when tenant_id is missing."""
     monkeypatch.delenv('REDIS_URL', raising=False)
 
-    store = _build_tenant_session_store(None, eng.logging.getLogger("taivium.engine"))
+    store = eng._build_tenant_session_store(None, eng.logging.getLogger("taivium.engine"))
 
     assert isinstance(store, InMemorySessionStore)
 
@@ -271,7 +264,7 @@ def test_build_tenant_session_store_returns_in_memory_without_redis_url(monkeypa
     """Helper returns InMemorySessionStore when REDIS_URL is not configured."""
     monkeypatch.delenv('REDIS_URL', raising=False)
 
-    store = _build_tenant_session_store("tenant-acme", eng.logging.getLogger("taivium.engine"))
+    store = eng._build_tenant_session_store("tenant-acme", eng.logging.getLogger("taivium.engine"))
 
     assert isinstance(store, InMemorySessionStore)
 
@@ -295,8 +288,8 @@ def test_build_tenant_session_store_uses_tenant_ttl_override(monkeypatch):
         self._ttl = ttl
         self._prefix = f"taivium:{tenant_id}:session:{session_id}:"
 
-    with patch.object(RedisSessionStore, '__init__', mock_redis_init):
-        store = _build_tenant_session_store("tenant-acme", eng.logging.getLogger("taivium.engine"))
+    with patch.object(eng.RedisSessionStore, '__init__', mock_redis_init):
+        store = eng._build_tenant_session_store("tenant-acme", eng.logging.getLogger("taivium.engine"))
 
     assert store is not None
     assert captured['tenant_id'] == 'tenant-acme'
@@ -333,9 +326,9 @@ def test_parse_module_engine_options_accepts_json_dict_string():
 def test_resolve_default_session_ttl_non_integer_falls_back(monkeypatch):
     """Non-integer SESSION_TTL_SECONDS logs a warning and returns 86400."""
     monkeypatch.setenv('SESSION_TTL_SECONDS', 'not-a-number')
-    logger = logging.getLogger("taivium.engine")
+    logger = eng.logging.getLogger("taivium.engine")
 
-    result = _resolve_default_session_ttl(logger)
+    result = eng._resolve_default_session_ttl(logger)
 
     assert result == 86400
 
@@ -343,9 +336,9 @@ def test_resolve_default_session_ttl_non_integer_falls_back(monkeypatch):
 def test_resolve_default_session_ttl_zero_falls_back(monkeypatch):
     """SESSION_TTL_SECONDS=0 is invalid; logs a warning and returns 86400."""
     monkeypatch.setenv('SESSION_TTL_SECONDS', '0')
-    logger = logging.getLogger("taivium.engine")
+    logger = eng.logging.getLogger("taivium.engine")
 
-    result = _resolve_default_session_ttl(logger)
+    result = eng._resolve_default_session_ttl(logger)
 
     assert result == 86400
 
@@ -353,9 +346,9 @@ def test_resolve_default_session_ttl_zero_falls_back(monkeypatch):
 def test_resolve_default_session_ttl_negative_falls_back(monkeypatch):
     """Negative SESSION_TTL_SECONDS logs a warning and returns 86400."""
     monkeypatch.setenv('SESSION_TTL_SECONDS', '-100')
-    logger = logging.getLogger("taivium.engine")
+    logger = eng.logging.getLogger("taivium.engine")
 
-    result = _resolve_default_session_ttl(logger)
+    result = eng._resolve_default_session_ttl(logger)
 
     assert result == 86400
 
@@ -367,9 +360,9 @@ def test_resolve_default_session_ttl_negative_falls_back(monkeypatch):
 def test_resolve_tenant_session_ttl_invalid_json_falls_back(monkeypatch):
     """Invalid JSON in TENANT_SESSION_TTL_SECONDS logs a warning and returns default_ttl."""
     monkeypatch.setenv('TENANT_SESSION_TTL_SECONDS', '{not valid json}')
-    logger = logging.getLogger("taivium.engine")
+    logger = eng.logging.getLogger("taivium.engine")
 
-    result = _resolve_tenant_session_ttl("tenant-acme", 3600, logger)
+    result = eng._resolve_tenant_session_ttl("tenant-acme", 3600, logger)
 
     assert result == 3600
 
@@ -377,9 +370,9 @@ def test_resolve_tenant_session_ttl_invalid_json_falls_back(monkeypatch):
 def test_resolve_tenant_session_ttl_non_dict_json_falls_back(monkeypatch):
     """TENANT_SESSION_TTL_SECONDS that decodes to a list (not dict) logs a warning and returns default_ttl."""
     monkeypatch.setenv('TENANT_SESSION_TTL_SECONDS', '[1, 2, 3]')
-    logger = logging.getLogger("taivium.engine")
+    logger = eng.logging.getLogger("taivium.engine")
 
-    result = _resolve_tenant_session_ttl("tenant-acme", 3600, logger)
+    result = eng._resolve_tenant_session_ttl("tenant-acme", 3600, logger)
 
     assert result == 3600
 
@@ -387,9 +380,9 @@ def test_resolve_tenant_session_ttl_non_dict_json_falls_back(monkeypatch):
 def test_resolve_tenant_session_ttl_invalid_value_for_tenant_falls_back(monkeypatch):
     """Non-integer per-tenant TTL value logs a warning and returns default_ttl."""
     monkeypatch.setenv('TENANT_SESSION_TTL_SECONDS', '{"tenant-acme": "bad-value"}')
-    logger = logging.getLogger("taivium.engine")
+    logger = eng.logging.getLogger("taivium.engine")
 
-    result = _resolve_tenant_session_ttl("tenant-acme", 3600, logger)
+    result = eng._resolve_tenant_session_ttl("tenant-acme", 3600, logger)
 
     assert result == 3600
 
@@ -397,9 +390,9 @@ def test_resolve_tenant_session_ttl_invalid_value_for_tenant_falls_back(monkeypa
 def test_resolve_tenant_session_ttl_zero_value_for_tenant_falls_back(monkeypatch):
     """Zero per-tenant TTL value is invalid; logs a warning and returns default_ttl."""
     monkeypatch.setenv('TENANT_SESSION_TTL_SECONDS', '{"tenant-acme": 0}')
-    logger = logging.getLogger("taivium.engine")
+    logger = eng.logging.getLogger("taivium.engine")
 
-    result = _resolve_tenant_session_ttl("tenant-acme", 3600, logger)
+    result = eng._resolve_tenant_session_ttl("tenant-acme", 3600, logger)
 
     assert result == 3600
 
@@ -416,8 +409,8 @@ def test_build_tenant_session_store_falls_back_on_redis_oserror(monkeypatch):
     def mock_redis_init_raises(self, **kwargs):
         raise OSError("connection refused")
 
-    with patch.object(RedisSessionStore, '__init__', mock_redis_init_raises):
-        store = _build_tenant_session_store(
+    with patch.object(eng.RedisSessionStore, '__init__', mock_redis_init_raises):
+        store = eng._build_tenant_session_store(
             "tenant-acme", eng.logging.getLogger("taivium.engine")
         )
 

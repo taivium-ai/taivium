@@ -21,14 +21,11 @@ from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, cast, Dict, List, Optional, Tuple
+import os
 
 from .transformer import transformer_evidence
 from .transformer_gliner import gliner_evidence
-from .session_store import (
-    InMemorySessionStore,
-    SessionStore,
-    _build_tenant_session_store,
-)
+from .session_store import InMemorySessionStore, SessionStore, RedisSessionStore
 from .llm import llm_evidence
 from .audit_logger import log_audit_event
 from .utility import get_spacy_model
@@ -1837,6 +1834,64 @@ def _options_key(parsed_options: Dict[str, Any]) -> Tuple[bool, bool, str, int, 
         # Do not include non-hashable objects like functions or custom classes
     )
 
+def _resolve_default_session_ttl(_logger: logging.Logger) -> int:
+    """Resolve default session TTL from SESSION_TTL_SECONDS with validation."""
+    ttl_str = os.getenv("SESSION_TTL_SECONDS", "86400")
+    try:
+        ttl = int(ttl_str)
+        if ttl <= 0:
+            raise ValueError("TTL must be > 0")
+        return ttl
+    except ValueError:
+        _logger.warning("Invalid SESSION_TTL_SECONDS: %s, using default 86400", ttl_str)
+        return 86400
+
+
+def _resolve_tenant_session_ttl(tenant_id: str, default_ttl: int, _logger: logging.Logger) -> int:
+    """Resolve per-tenant TTL override from TENANT_SESSION_TTL_SECONDS policy.
+
+    Environment format:
+        TENANT_SESSION_TTL_SECONDS='{"tenant-a": 1800, "tenant-b": 7200}'
+    """
+    policy_str = os.getenv("TENANT_SESSION_TTL_SECONDS", "").strip()
+    if not policy_str:
+        return default_ttl
+
+    try:
+        policy = json.loads(policy_str)
+    except json.JSONDecodeError as exc:
+        _logger.warning(
+            "Invalid TENANT_SESSION_TTL_SECONDS JSON: %s; using SESSION_TTL_SECONDS",
+            exc,
+        )
+        return default_ttl
+
+    if not isinstance(policy, dict):
+        _logger.warning(
+            "TENANT_SESSION_TTL_SECONDS must decode to a dict; got %s; using SESSION_TTL_SECONDS",
+            type(policy).__name__,
+        )
+        return default_ttl
+
+    tenant_ttl_raw = policy.get(tenant_id,None)
+    if tenant_ttl_raw is None:
+        return default_ttl
+
+    try:
+        tenant_ttl = int(tenant_ttl_raw)
+        if tenant_ttl <= 0:
+            raise ValueError("TTL must be > 0")
+        return tenant_ttl
+    except (TypeError, ValueError):
+        _logger.warning(
+            "Invalid tenant TTL override in TENANT_SESSION_TTL_SECONDS for tenant %s: %s; "
+            "falling back to SESSION_TTL_SECONDS",
+            tenant_id,
+            tenant_ttl_raw,
+        )
+        return default_ttl
+
+
 def _parse_module_engine_options(
     options: Any,
     _logger: logging.Logger,
@@ -1865,6 +1920,47 @@ def _parse_module_engine_options(
     options_type = type(options).__name__
     _logger.error("Options must be a dict or JSON string, got %s", options_type)
     return None, f"Options must be a dict or JSON string, got {options_type}"
+
+
+def _build_tenant_session_store(
+    tenant_id: Optional[str],
+    _logger: logging.Logger,
+) -> SessionStore:
+    """Create a tenant-aware session store, or in-memory fallback."""
+    if not tenant_id:
+        return InMemorySessionStore()
+
+    redis_url = os.getenv("REDIS_URL")
+    if not redis_url:
+        _logger.debug(
+            "tenant_id provided but REDIS_URL not configured; "
+            "using in-memory session store"
+        )
+        return InMemorySessionStore()
+
+    default_ttl = _resolve_default_session_ttl(_logger)
+    ttl = _resolve_tenant_session_ttl(str(tenant_id), default_ttl, _logger)
+    try:
+        session_store = RedisSessionStore(
+            session_id="tenant-session",  # Placeholder; unused in per-tenant mode
+            redis_url=redis_url,
+            ttl=ttl,
+            tenant_id=tenant_id,
+        )
+        _logger.info(
+            "Created per-tenant RedisSessionStore for tenant: %s (ttl=%ss)",
+            tenant_id,
+            ttl,
+        )
+        return session_store
+    except (OSError, IOError) as exc:
+        _logger.warning(
+            "Failed to create per-tenant RedisSessionStore for tenant %s: %s; "
+            "falling back to in-memory",
+            tenant_id,
+            exc,
+        )
+        return InMemorySessionStore()
 
 
 def module_engine_process(text: str, options: Any = None) -> "Dict[str, Any]":
