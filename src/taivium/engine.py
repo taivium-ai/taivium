@@ -639,7 +639,7 @@ SOURCE_WEIGHT: Dict[str, float] = {
     "gliner": 1.0,      # Highest weight: GLiNER is most precise for named entities
     "regex": 1.0,       # Regex patterns also very reliable
     "org_list": 1.0,    # Curated organization list: very high precision for known orgs
-    "spacy": 0.5,       # Lower weight: spaCy has lower precision on PERSON/LOCATION
+    "spacy": 0.7,       # Lower weight: spaCy has lower precision on PERSON/LOCATION
     "transformer": 0.8,
     "llm": 0.6,
     "recurrence": 0.4,  # Very conservative: only accepts high-confidence recurrence
