@@ -7,14 +7,14 @@ import pytest
 import types
 import logging
 from taivium import transformer_gliner as gliner
-
+from taivium.transformer_gliner import _verify_onnx_provider
 
 class TestGlinerEvidence:
     """Test suite for gliner_evidence() function."""
 
     def setup_method(self):
         """Clear cache before each test."""
-        from taivium.utility import get_gliner_model
+        from taivium.transformer_gliner import get_gliner_model
         get_gliner_model.cache_clear()
 
     def test_gliner_evidence_returns_list(self):
@@ -102,7 +102,7 @@ class TestGlinerEvidence:
             raise RuntimeError("Model error")
         
         mock_model = types.SimpleNamespace(predict_entities=failing_predict)
-        from taivium.utility import get_gliner_model
+        from taivium.transformer_gliner import get_gliner_model
         monkeypatch.setattr(get_gliner_model, "cache_clear", lambda: None)
         monkeypatch.setattr(gliner, "get_gliner_model", lambda: mock_model)
         
@@ -129,7 +129,7 @@ class TestGlinerEvidence:
 
     def test_chunk_text_for_gliner_shorter_than_max_tokens(self):
         """Text shorter than max token window should remain a single chunk."""
-        from taivium.utility import get_gliner_model
+        from taivium.transformer_gliner import get_gliner_model
         model = get_gliner_model()
         tokenizer = model.data_processor.transformer_tokenizer
         
@@ -146,7 +146,7 @@ class TestGlinerEvidence:
 
     def test_chunk_text_for_gliner_equal_max_tokens(self):
         """Text around max token window should stay as single chunk if within limit."""
-        from taivium.utility import get_gliner_model
+        from taivium.transformer_gliner import get_gliner_model
         model = get_gliner_model()
         tokenizer = model.data_processor.transformer_tokenizer
         
@@ -161,7 +161,7 @@ class TestGlinerEvidence:
 
     def test_chunk_text_for_gliner_just_longer_than_max_tokens(self):
         """Text that exceeds max token window should split into multiple chunks."""
-        from taivium.utility import get_gliner_model
+        from taivium.transformer_gliner import get_gliner_model
         model = get_gliner_model()
         tokenizer = model.data_processor.transformer_tokenizer
         # Create text that will definitely exceed 382 DeBERTa tokens
@@ -193,7 +193,7 @@ class TestGlinerEvidence:
         
     def test_chunk_text_for_gliner_token_count_equals_batch_size(self):
         """Token count equal to batch size should still be a single chunk if under max."""
-        from taivium.utility import get_gliner_model
+        from taivium.transformer_gliner import get_gliner_model
         model = get_gliner_model()
         tokenizer = model.data_processor.transformer_tokenizer
         
@@ -206,7 +206,7 @@ class TestGlinerEvidence:
 
     def test_chunk_text_for_gliner_token_count_twice_batch_size(self):
         """Token count twice batch size should still be a single chunk if under max."""
-        from taivium.utility import get_gliner_model
+        from taivium.transformer_gliner import get_gliner_model
         model = get_gliner_model()
         tokenizer = model.data_processor.transformer_tokenizer
         
@@ -218,7 +218,7 @@ class TestGlinerEvidence:
 
     def test_chunk_text_for_gliner_non_edge_multi_chunk_flow(self):
         """Typical long text should create stable overlapping chunks."""
-        from taivium.utility import get_gliner_model
+        from taivium.transformer_gliner import get_gliner_model
         model = get_gliner_model()
         tokenizer = model.data_processor.transformer_tokenizer
         
@@ -241,7 +241,7 @@ class TestGlinerEvidence:
 
     def test_chunk_text_for_gliner_exact_token_boundaries(self):
         """Verify chunks respect exact token boundaries with DeBERTa tokenizer."""
-        from taivium.utility import get_gliner_model
+        from taivium.transformer_gliner import get_gliner_model
         model = get_gliner_model()
         tokenizer = model.data_processor.transformer_tokenizer
         
@@ -304,7 +304,7 @@ class TestGlinerEvidence:
 
     def test_gliner_evidence_chunks_text_over_384_tokens(self, monkeypatch):
         """Long text should be split into multiple GLiNER chunks."""
-        from taivium.utility import get_gliner_model
+        from taivium.transformer_gliner import get_gliner_model
         real_model = get_gliner_model()
         real_tokenizer = real_model.data_processor.transformer_tokenizer
         
@@ -333,7 +333,7 @@ class TestGlinerEvidence:
 
     def test_gliner_evidence_uses_batch_predict_when_available(self, monkeypatch):
         """Use batch_predict_entities when model supports it."""
-        from taivium.utility import get_gliner_model
+        from taivium.transformer_gliner import get_gliner_model
         real_model = get_gliner_model()
         real_tokenizer = real_model.data_processor.transformer_tokenizer
         
@@ -557,7 +557,7 @@ class TestGlinerEvidence:
 
     def test_chunk_text_for_gliner_no_tokens(self):
         """_chunk_text_for_gliner should handle text with no tokens (only whitespace)."""
-        from taivium.utility import get_gliner_model
+        from taivium.transformer_gliner import get_gliner_model
         model = get_gliner_model()
         tokenizer = model.data_processor.transformer_tokenizer
         
@@ -589,7 +589,7 @@ class TestGlinerEvidence:
 
     def test_gliner_evidence_deduplication(self, monkeypatch):
         """gliner_evidence should deduplicate overlapping predictions."""
-        from taivium.utility import get_gliner_model
+        from taivium.transformer_gliner import get_gliner_model
         real_model = get_gliner_model()
         real_tokenizer = real_model.data_processor.transformer_tokenizer
         
@@ -613,7 +613,7 @@ class TestGlinerEvidence:
 
     def test_gliner_evidence_label_normalization(self, monkeypatch):
         """gliner_evidence should normalize labels correctly."""
-        from taivium.utility import get_gliner_model
+        from taivium.transformer_gliner import get_gliner_model
         real_model = get_gliner_model()
         real_tokenizer = real_model.data_processor.transformer_tokenizer
         
@@ -636,7 +636,7 @@ class TestGlinerEvidence:
 
     def test_chunk_text_for_gliner_complex_overlap(self):
         """_chunk_text_for_gliner should maintain proper overlap for complex texts."""
-        from taivium.utility import get_gliner_model
+        from taivium.transformer_gliner import get_gliner_model
         model = get_gliner_model()
         tokenizer = model.data_processor.transformer_tokenizer
         
@@ -680,7 +680,7 @@ class TestGlinerEvidence:
 
     def test_gliner_evidence_unknown_label_filtering(self, monkeypatch):
         """gliner_evidence should skip predictions with UNKNOWN labels."""
-        from taivium.utility import get_gliner_model
+        from taivium.transformer_gliner import get_gliner_model
         real_model = get_gliner_model()
         real_tokenizer = real_model.data_processor.transformer_tokenizer
         
@@ -752,7 +752,7 @@ class TestGlinerEvidence:
 
     def test_gliner_evidence_multiple_spans_same_location(self, monkeypatch):
         """gliner_evidence should handle overlapping predictions at same location."""
-        from taivium.utility import get_gliner_model
+        from taivium.transformer_gliner import get_gliner_model
         real_model = get_gliner_model()
         real_tokenizer = real_model.data_processor.transformer_tokenizer
         
@@ -776,7 +776,7 @@ class TestGlinerEvidence:
 
     def test_gliner_evidence_special_characters(self, monkeypatch):
         """gliner_evidence should handle text with special characters."""
-        from taivium.utility import get_gliner_model
+        from taivium.transformer_gliner import get_gliner_model
         real_model = get_gliner_model()
         real_tokenizer = real_model.data_processor.transformer_tokenizer
         
@@ -817,7 +817,7 @@ class TestGlinerEvidence:
 
     def test_chunk_text_for_gliner_preserves_exact_text(self):
         """_chunk_text_for_gliner should preserve the exact original text for each chunk."""
-        from taivium.utility import get_gliner_model
+        from taivium.transformer_gliner import get_gliner_model
         model = get_gliner_model()
         tokenizer = model.data_processor.transformer_tokenizer
 
@@ -854,3 +854,35 @@ class TestGlinerEvidence:
             )
         
 
+# --- _verify_onnx_provider exception handling (line 47-50) ---
+def test_verify_onnx_provider_exception_fallback(monkeypatch):
+    """_verify_onnx_provider catches exceptions and returns fallback string."""
+    class BadModel:
+        pass
+    
+    def bad_get_available_providers(*args):
+        raise RuntimeError("ONNX error")
+    
+    monkeypatch.setattr(gliner.rt, "get_available_providers", bad_get_available_providers)
+    result = _verify_onnx_provider(BadModel())
+    assert result == "CPUExecutionProvider (fallback)"
+
+# --- GLiNER Model Caching Tests ---
+class TestGetGlinerModel:
+    """Test suite for get_gliner_model() function."""    
+
+    def test_get_gliner_model_returns_model_instance(self):
+        """get_gliner_model() should return a GLiNER model instance."""
+        from taivium.transformer_gliner import get_gliner_model
+        get_gliner_model.cache_clear()
+        model = get_gliner_model()
+        assert model is not None
+        assert hasattr(model, 'predict_entities')
+
+    def test_get_gliner_model_caches_instance(self):
+        """get_gliner_model() should return the same cached instance on repeated calls."""
+        from taivium.transformer_gliner import get_gliner_model
+        get_gliner_model.cache_clear()
+        model1 = get_gliner_model()
+        model2 = get_gliner_model()
+        assert model1 is model2
