@@ -24,6 +24,7 @@ def test_privacy_pipeline_all_labels():
     They met at Central Park before heading to the Amazon River.
     """
     result = pipeline.process(text)
+    print(result)
     expected_labels = {"PERSON", "ORG", "EMAIL", "API_KEY", "PHONE", "LOCATION"}
     found_labels = {e["label"] for e in result["entities"]}
     missing_labels = expected_labels - found_labels
