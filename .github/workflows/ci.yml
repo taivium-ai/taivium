@@ -60,6 +60,7 @@ jobs:
             --extra-index-url https://download.pytorch.org/whl/cpu
             # --- LINTING ---
       - name: Pylint
+        if: ${{ !cancelled() && matrix.python-version == '3.13' }}
         run: python -m pylint ./src --fail-under=9.7
 
       # --- TESTING & COVERAGE GENERATION ---

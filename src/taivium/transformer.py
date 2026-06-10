@@ -14,12 +14,10 @@ import warnings
 
 import logging
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, List
+from typing import Any, List
+from .defs import Evidence, normalize_label
 
 logger = logging.getLogger("taivium.transformer")
-
-if TYPE_CHECKING:
-    from .engine import Evidence
 
 # Mapping from dslim/bert-base-NER entity groups to internal labels.
 _LABEL_MAP = {
@@ -92,9 +90,6 @@ def transformer_evidence(text: str) -> List[Evidence]:
         A list of :class:`~taivium.engine.Evidence` records with
         ``source="transformer"``.
     """
-    # Deferred import to avoid circular dependency with engine.py.
-    from .engine import Evidence, normalize_label  # pylint: disable=import-outside-toplevel
-
 
     ner = _get_ner_pipeline()
     if ner is None:

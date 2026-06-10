@@ -7,11 +7,11 @@ variable-length text inputs. This module handles texts longer than GLiNER's
 
 import logging
 from typing import Any, cast, Dict, List, Optional, Tuple
-from typing import TYPE_CHECKING
 import warnings
 
 from transformers.utils import logging as hf_logging
 from .utility import get_gliner_model
+from .defs import Evidence, normalize_label
 
 def suppress_gliner_warnings_veified_by_tests():
     """Suppress specific warnings from transformers and ONNX Runtime during GLiNER loading."""
@@ -19,13 +19,6 @@ def suppress_gliner_warnings_veified_by_tests():
     warnings.filterwarnings("ignore", message=".*no maximum length is provided.*")
     hf_logging.set_verbosity_error()
 suppress_gliner_warnings_veified_by_tests()
-
-if TYPE_CHECKING:
-    # This is only for type hints, won't cause circular import at runtime
-    from .engine import Evidence
-else:
-    # At runtime, we'll get Evidence from the caller's context
-    Evidence = Any
 
 logger = logging.getLogger("taivium.engine")
 
@@ -182,9 +175,6 @@ def gliner_evidence(text: str, targets: Optional[List[str]] = None) -> List[Any]
     Returns:
         List of GLiNER-origin `Evidence` records with high-confidence threshold.
     """
-    # Import Evidence and normalize_label here to avoid circular import at module load time
-    from .engine import Evidence, normalize_label  # pylint: disable=import-outside-toplevel
-
     evidence: List[Any] = []
 
     # Use provided targets or default to PERSON, LOCATION, and ORGANIZATION
