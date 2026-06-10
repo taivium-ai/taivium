@@ -88,7 +88,7 @@ class TestSerializeMetadata:
     """Tests for the _serialize_metadata helper."""
     def test_enum_is_serialized_to_value(self) -> None:
         """Enum values are stored as their .value strings."""
-        from taivium.engine import PolicyAction, RiskLevel  # pylint: disable=import-outside-toplevel
+        from taivium.defs import PolicyAction, RiskLevel  # pylint: disable=import-outside-toplevel
         meta = {"action": PolicyAction.ANONYMIZE, "risk": RiskLevel.HIGH}
         result = _serialize_metadata(meta)
         assert result["action"] == "anonymize"
@@ -141,7 +141,7 @@ class TestRedisSessionStore:
 
     def test_enum_values_round_trip(self, redis_store: RedisSessionStore) -> None:
         """Enum fields are serialized to their .value on write and returned as strings."""
-        from taivium.engine import PolicyAction, RiskLevel  # pylint: disable=import-outside-toplevel
+        from taivium.defs import PolicyAction, RiskLevel  # pylint: disable=import-outside-toplevel
         redis_store.set("EMAIL_abc", {
             "text": "alice@acme.com",
             "action": PolicyAction.ANONYMIZE,

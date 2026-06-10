@@ -18,8 +18,6 @@ import threading
 import time
 import unicodedata
 from collections import defaultdict
-from dataclasses import dataclass
-from enum import Enum
 from typing import Any, Callable, cast, Dict, List, Optional, Tuple
 import os
 
@@ -29,7 +27,10 @@ from .session_store import InMemorySessionStore, SessionStore, RedisSessionStore
 from .llm import llm_evidence
 from .audit_logger import log_audit_event
 from .utility import get_spacy_model
-from .defs import Evidence, normalize_label, Entity, PolicyAction, RiskLevel, SpanCandidate
+from .defs import (Evidence, normalize_label, Entity,
+                   PolicyAction, SpanCandidate, PolicyDecision,
+                   PolicyContext, PolicyDecisionReason, PolicyRule,
+                   DEFAULT_POLICY,DEFAULT_UNDEFINED_POLICY_RISK)
 from .regex import regex_evidence, _is_placeholder, org_list_evidence
 logger = logging.getLogger("taivium.engine")
 
@@ -867,63 +868,6 @@ def reverse_transform(text: str, mapping: Dict[str, Dict[str, Any]]) -> str:
 # -----------------------------
 # Policy Engine
 # -----------------------------
-
-@dataclass
-class PolicyRule:
-    """Defines a policy rule for a specific entity label, including the
-        action to take and the associated risk level."""
-    label: str
-    action: PolicyAction
-    risk: RiskLevel
-
-
-DEFAULT_POLICY: Dict[str, PolicyRule] = {
-    "PERSON": PolicyRule("PERSON", PolicyAction.ANONYMIZE, RiskLevel.MEDIUM),
-    "ORG": PolicyRule("ORG", PolicyAction.ANONYMIZE, RiskLevel.MEDIUM),
-    "LOCATION": PolicyRule("LOCATION", PolicyAction.ANONYMIZE, RiskLevel.LOW),
-    "EMAIL": PolicyRule("EMAIL", PolicyAction.ANONYMIZE, RiskLevel.HIGH),
-    "PHONE": PolicyRule("PHONE", PolicyAction.ANONYMIZE, RiskLevel.HIGH),
-    "API_KEY": PolicyRule("API_KEY", PolicyAction.ANONYMIZE, RiskLevel.CRITICAL),
-}
-
-
-DEFAULT_UNDEFINED_POLICY_RISK = RiskLevel.UNKNOWN
-
-
-class PolicyDecisionReason(str, Enum):
-    """Enumerates reasons for a policy decision (explicit rule or fallback)."""
-    EXPLICIT = "explicit_rule"
-    FALLBACK = "fallback_rule"
-
-
-@dataclass(frozen=True)
-class PolicyDecision:
-    """Represents the decision made by the PolicyEngine for a specific entity.
-
-    Includes the entity's label, the action to take, the associated risk level,
-    and the reason for the decision.
-    """
-    label: str
-    action: PolicyAction
-    risk: RiskLevel
-    reason: PolicyDecisionReason
-
-
-@dataclass(frozen=True)
-class PolicyContext:
-    """Optional context payload for future policy decisions.
-
-    The current PolicyEngine implementation remains label-only, but this
-    structure is threaded through evaluation so future policies can use
-    additional signals (context, confidence, detector source, etc.) without
-    changing the public call shape.
-    """
-    text: str
-    confidence: float
-    source: str
-    evidence_sources: Tuple[str, ...] = ()
-    metadata: Optional[Dict[str, Any]] = None
-
 
 class PolicyEngine:
     """PolicyEngine determines the action to take for each detected

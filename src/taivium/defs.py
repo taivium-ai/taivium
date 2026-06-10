@@ -1,16 +1,7 @@
 '''Defines data structures used across the codebase.'''
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Tuple, Dict, Any, Optional
 from enum import Enum
-
-@dataclass(frozen=True)
-class Evidence:
-    """Represents detector evidence before span canonicalization."""
-    start: int
-    end: int
-    label: str
-    source: str
-    confidence: float
 
 # -----------------------------
 # Label normalization
@@ -78,8 +69,16 @@ class RiskLevel(str, Enum):
     UNKNOWN = "unknown"
 
 # -----------------------------
-# Evidence and Entity structures
+# Evidence, SpanCandidate and Entity structures
 # -----------------------------
+@dataclass(frozen=True)
+class Evidence:
+    """Represents detector evidence before span canonicalization."""
+    start: int
+    end: int
+    label: str
+    source: str
+    confidence: float
 
 @dataclass(frozen=True)
 class SpanCandidate:
@@ -119,3 +118,59 @@ class Entity:
     source: str
     evidence_sources: Tuple[str, ...] = ()
     confidence: float = 0.0
+
+
+@dataclass
+class PolicyRule:
+    """Defines a policy rule for a specific entity label, including the
+        action to take and the associated risk level."""
+    label: str
+    action: PolicyAction
+    risk: RiskLevel
+
+
+DEFAULT_POLICY: Dict[str, PolicyRule] = {
+    "PERSON": PolicyRule("PERSON", PolicyAction.ANONYMIZE, RiskLevel.MEDIUM),
+    "ORG": PolicyRule("ORG", PolicyAction.ANONYMIZE, RiskLevel.MEDIUM),
+    "LOCATION": PolicyRule("LOCATION", PolicyAction.ANONYMIZE, RiskLevel.LOW),
+    "EMAIL": PolicyRule("EMAIL", PolicyAction.ANONYMIZE, RiskLevel.HIGH),
+    "PHONE": PolicyRule("PHONE", PolicyAction.ANONYMIZE, RiskLevel.HIGH),
+    "API_KEY": PolicyRule("API_KEY", PolicyAction.ANONYMIZE, RiskLevel.CRITICAL),
+}
+
+DEFAULT_UNDEFINED_POLICY_RISK = RiskLevel.UNKNOWN
+
+class PolicyDecisionReason(str, Enum):
+    """Enumerates reasons for a policy decision (explicit rule or fallback)."""
+    EXPLICIT = "explicit_rule"
+    FALLBACK = "fallback_rule"
+
+
+@dataclass(frozen=True)
+class PolicyDecision:
+    """Represents the decision made by the PolicyEngine for a specific entity.
+
+    Includes the entity's label, the action to take, the associated risk level,
+    and the reason for the decision.
+    """
+    label: str
+    action: PolicyAction
+    risk: RiskLevel
+    reason: PolicyDecisionReason
+
+
+@dataclass(frozen=True)
+class PolicyContext:
+    """Optional context payload for future policy decisions.
+
+    The current PolicyEngine implementation remains label-only, but this
+    structure is threaded through evaluation so future policies can use
+    additional signals (context, confidence, detector source, etc.) without
+    changing the public call shape.
+    """
+    text: str
+    confidence: float
+    source: str
+    evidence_sources: Tuple[str, ...] = ()
+    metadata: Optional[Dict[str, Any]] = None
+    
