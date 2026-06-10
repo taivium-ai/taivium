@@ -213,7 +213,7 @@ def test_normalize_label_empty():
 
 # --- _extract_field_key_from_match: no recognized key returns None ---
 def test_extract_field_key_no_match():
-    result = eng._extract_field_key_from_match("unknownkey: somevalue")
+    result = _extract_field_key_from_match("unknownkey: somevalue")
     assert result is None
 
 
@@ -307,7 +307,7 @@ def test_latency_history_trimmed():
 
 # --- GLiNER Evidence Collection Tests ---
 
-from taivium.engine import skip_username_candidate as _skip_username_candidate
+from taivium.regex import _extract_field_key_from_match, skip_username_candidate as _skip_username_candidate
 
 class TestSkipUsernameCandidate:
     """Tests for _skip_username_candidate."""
@@ -332,10 +332,9 @@ class TestSkipUsernameCandidate:
     # --- Placeholder regex ---
     def test_placeholder_token(self, monkeypatch):
         import re
-        from taivium import engine
-
+        import taivium.regex as regex
         monkeypatch.setattr(
-            engine,
+            regex,
             "_PLACEHOLDER_RE",
             re.compile(r"\{\{.*\}\}")
         )

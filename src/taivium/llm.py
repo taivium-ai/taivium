@@ -17,11 +17,10 @@ import json
 import os
 import re
 import warnings
-from typing import TYPE_CHECKING, List, Any
-from collections.abc import Callable  # pylint: disable=import-error
-
-# Logging system
+from typing import List, Any
 import logging
+from .defs import Evidence, normalize_label
+
 logger = logging.getLogger("taivium.llm")
 
 
@@ -38,9 +37,6 @@ class _WarnState:
     def reset_warning(cls):
         """Resets the API key warning state (for testing or re-initialization)."""
         cls.warned_no_api_key = False
-
-if TYPE_CHECKING:
-    from .engine import Evidence
 
 _SYSTEM_PROMPT = """\
 You are a precise named-entity recognizer for privacy protection.
@@ -79,9 +75,7 @@ def _clean_llm_json(raw: str | None) -> str:
 # Helper to extract evidence from entities
 def _extract_evidence(
         entities: list[dict[str, Any]],
-        text: str,
-        normalize_label: Callable[[str], str],
-        Evidence, # pylint: disable=invalid-name
+        text: str
     ) -> list[Evidence]:
     evidence = []
     seen = set()
@@ -134,9 +128,6 @@ def llm_evidence(text: str) -> List[Evidence]:
         A list of :class:`~taivium.engine.Evidence` records with
         ``source="llm"``.
     """
-    # Deferred import to avoid circular dependency with engine.py.
-    from .engine import Evidence, normalize_label  # pylint: disable=import-outside-toplevel
-
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         if not _WarnState.warned_no_api_key:
@@ -175,4 +166,4 @@ def llm_evidence(text: str) -> List[Evidence]:
     if not isinstance(entities, list):
         return []
 
-    return _extract_evidence(entities, text, normalize_label, Evidence)
+    return _extract_evidence(entities, text)
