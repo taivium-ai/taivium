@@ -1,5 +1,6 @@
 import io
 import json
+import logging
 import sys
 import types
 from unittest.mock import patch
@@ -64,10 +65,24 @@ def test_silent_on_value_error(capsys):
 
 
 def test_silent_on_os_error(capsys):
-    """print() raises OSError when stdout is a broken pipe — must be swallowed."""
-    broken = io.TextIOWrapper(io.RawIOBase())  # write() always raises OSError
-    with patch("taivium.audit_logger.sys.stdout", broken):
-        _call()   # must not raise
+    """OSError from the logging handler — must be swallowed."""
+    import taivium.audit_logger as _mod
+    
+    # Mock the logger's handlers to raise OSError on emit
+    original_handlers = _mod.logger.handlers[:]
+    
+    class FailingHandler(logging.Handler):
+        def emit(self, record):
+            raise OSError("broken pipe")
+    
+    try:
+        _mod.logger.handlers.clear()
+        _mod.logger.addHandler(FailingHandler())
+        _call()  # must not raise
+    finally:
+        _mod.logger.handlers.clear()
+        for handler in original_handlers:
+            _mod.logger.addHandler(handler)
 
 
 # ---------------------------------------------------------------------------
@@ -115,19 +130,47 @@ def test_enterprise_override_import_error_keeps_default():
         importlib.reload(_mod)
         # Must still be callable and emit JSON
         buf = io.StringIO()
-        with patch.object(_mod, "sys", sys):
-            with patch("taivium.audit_logger.sys.stdout", buf):
-                _mod.log_audit_event(
-                    operation="test",
-                    session_id="",
-                    entity_count=0,
-                    entity_types=[],
-                    duration_ms=0.0,
-                    status="ok",
-                )
-        event = json.loads(buf.getvalue())
-        assert event["operation"] == "test"
+        handler = logging.StreamHandler(buf)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        
+        original_handlers = _mod.logger.handlers[:]
+        try:
+            _mod.logger.handlers.clear()
+            _mod.logger.addHandler(handler)
+            
+            _mod.log_audit_event(
+                operation="test",
+                session_id="",
+                entity_count=0,
+                entity_types=[],
+                duration_ms=0.0,
+                status="ok",
+            )
+            event = json.loads(buf.getvalue())
+            assert event["operation"] == "test"
+        finally:
+            _mod.logger.handlers.clear()
+            for h in original_handlers:
+                _mod.logger.addHandler(h)
     finally:
         importlib.reload(_mod)
         for k, v in sys_modules_backup.items():
             sys.modules[k] = v
+
+
+def test_log_audit_event_suppressed_by_env_var(monkeypatch, capsys):
+    """When TAIVIUM_AUDIT_STDOUT is set to '0', logger output is skipped."""
+    monkeypatch.setenv("TAIVIUM_AUDIT_STDOUT", "0")
+    _call()
+    out = capsys.readouterr().out.strip()
+    # Should not have emitted anything since suppressed
+    assert out == ""
+
+
+def test_log_audit_event_false_values_suppress(monkeypatch, capsys):
+    """When TAIVIUM_AUDIT_STDOUT is 'false', 'off', or 'no', output is suppressed."""
+    for value in ["false", "off", "no"]:
+        monkeypatch.setenv("TAIVIUM_AUDIT_STDOUT", value)
+        _call()
+        out = capsys.readouterr().out.strip()
+        assert out == "", f"TAIVIUM_AUDIT_STDOUT={value} should suppress output"

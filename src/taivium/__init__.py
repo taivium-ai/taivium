@@ -29,17 +29,19 @@ For custom policies::
 from importlib.metadata import version, PackageNotFoundError
 
 from .client import PrivacyClient
-from .engine import (
-    Entity,
+from .defs import (
     Evidence,
+    Entity,
     PolicyAction,
-    PolicyDecision,
     PolicyContext,
+    PolicyDecision,
     PolicyDecisionReason,
-    PolicyEngine,
     PolicyRule,
-    Taivium,
     RiskLevel,
+)
+from .engine import (
+    PolicyEngine,
+    Taivium,
     find_recurrences,
     recurrence_evidence,
     reverse_transform,

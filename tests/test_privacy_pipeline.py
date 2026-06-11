@@ -40,15 +40,19 @@ def test_transform_no_raise_on_adjacent_spans() -> None:
     assert "PERSON_bbb" in transformed
 
 
-def test_collect_evidence_calls_all_detectors(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The evidence collector must invoke all detector layers."""
-    calls = {"spacy": 0, "regex": 0, "transformer": 0, "llm": 0}
+def test_collect_evidence_short_text_uses_fast_track(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Short text should route through regex + spaCy (fast track)."""
+    calls = {"spacy": 0, "gliner": 0, "regex": 0, "transformer": 0, "llm": 0}
 
     import taivium.engine as pp  # pylint: disable=import-outside-toplevel
 
-    def _spacy(_: str):
+    def _spacy(_: str, model_name: str = "en_core_web_sm"):
         calls["spacy"] += 1
         return [Evidence(0, 5, "PERSON", "spacy", 0.7)]
+
+    def _gliner(_: str, targets=None):
+        calls["gliner"] += 1
+        return [Evidence(0, 5, "PERSON", "gliner", 0.8)]
 
     def _regex(_: str):
         calls["regex"] += 1
@@ -63,6 +67,7 @@ def test_collect_evidence_calls_all_detectors(monkeypatch: pytest.MonkeyPatch) -
         return []
 
     monkeypatch.setattr(pp, "spacy_evidence", _spacy)
+    monkeypatch.setattr(pp, "gliner_evidence", _gliner)
     monkeypatch.setattr(pp, "regex_evidence", _regex)
     monkeypatch.setattr(pp, "transformer_evidence", _transformer)
     monkeypatch.setattr(pp, "llm_evidence", _llm)
@@ -70,7 +75,37 @@ def test_collect_evidence_calls_all_detectors(monkeypatch: pytest.MonkeyPatch) -
     evidence = pp.collect_evidence("Alice Acme", use_transformer=True, use_llm=True)
 
     assert len(evidence) == 2
-    assert calls == {"spacy": 1, "regex": 1, "transformer": 1, "llm": 1}
+    assert calls == {"spacy": 1, "gliner": 0, "regex": 1, "transformer": 1, "llm": 1}
+
+
+def test_collect_evidence_long_text_uses_context_track(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Long text should route through regex + GLiNER (context track)."""
+    calls = {"spacy": 0, "gliner": 0, "regex": 0}
+
+    import taivium.engine as pp  # pylint: disable=import-outside-toplevel
+
+    def _spacy(_: str, model_name: str = "en_core_web_sm"):
+        calls["spacy"] += 1
+        return []
+
+    def _gliner(_: str, targets=None):
+        calls["gliner"] += 1
+        return [Evidence(0, 4, "PERSON", "gliner", 0.9)]
+
+    def _regex(_: str):
+        calls["regex"] += 1
+        return []
+
+    monkeypatch.setattr(pp, "spacy_evidence", _spacy)
+    monkeypatch.setattr(pp, "gliner_evidence", _gliner)
+    monkeypatch.setattr(pp, "regex_evidence", _regex)
+
+    long_text = "A" * 120
+    evidence = pp.collect_evidence(long_text)
+
+    assert len(evidence) == 1
+    assert evidence[0].source == "gliner"
+    assert calls == {"spacy": 0, "gliner": 1, "regex": 1}
 
 
 def test_canonicalize_spans_weighted_vote() -> None:

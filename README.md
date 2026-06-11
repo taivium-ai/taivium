@@ -15,7 +15,7 @@ Taivium sits between your application and any LLM provider, automatically preven
 [![Coverage](https://codecov.io/gh/taivium-ai/taivium/branch/main/graph/badge.svg)](https://codecov.io/gh/taivium-ai/taivium)
 [![PyPI version](https://img.shields.io/pypi/v/taivium?cacheSeconds=0)](https://pypi.org/project/taivium/)
 [![Downloads](https://img.shields.io/pypi/dm/taivium)](https://pypi.org/project/taivium/)
-[![Python](https://img.shields.io/badge/python-3.9%2B-blue)](#installation)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](#installation)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -59,7 +59,7 @@ Every LLM call is a potential data leak.
 Your App ──► Taivium ──► LLM (OpenAI / Claude / local)
                 │
     ┌──────────────────────────────┐
-    │ Detection Layer              │  spaCy · regex · transformer · LLM
+    │ Detection Layer              │  Adaptive: regex+spaCy or regex+GLiNER · transformer · LLM
     │ Span Canonicalization        │  one entity per span
     │ Identity Engine              │  deterministic pseudonyms
     │ Policy Engine                │  ALLOW · ANONYMIZE · BLOCK
@@ -68,6 +68,20 @@ Your App ──► Taivium ──► LLM (OpenAI / Claude / local)
                 │
         Optional response restoration
 ```
+
+### Adaptive Cascading Pipeline
+
+Taivium routes detector execution by payload length to balance latency and context accuracy:
+
+- Fast Track (`len(text) < 100`): `regex_evidence` + `spacy_evidence`
+- Context Track (`len(text) >= 100`): `regex_evidence` + `gliner_evidence`
+
+For long context payloads, `gliner_evidence` automatically chunks inputs larger
+than 384 tokens with overlap and runs chunk inference in batches, then remaps
+entity spans back to original text offsets.
+
+This keeps short structured inputs on a lightweight path while reserving GLiNER for
+long narrative text where contextual entity resolution matters most.
 
 **Key idea:**  
 Each real-world entity gets a **stable pseudonymous ID** across the session.
@@ -118,6 +132,18 @@ Taivium uses spaCy for entity detection. You must manually install the English m
 
 ```bash
 pip install "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl#sha256=1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85"
+```
+
+The default model is `en_core_web_sm`, and you can configure a different spaCy model at runtime:
+
+```python
+from taivium.engine import Taivium
+
+# Default
+pipeline = Taivium()
+
+# Configured model
+pipeline = Taivium(spacy_model_name="en_core_web_lg")
 ```
 
 With Transformers (deep learning NER):
@@ -242,6 +268,170 @@ pipeline = Taivium(
 - LLM → broader detection  
 - Both optional  
 
+### 6. Configure spaCy Model
+
+```python
+from taivium.engine import Taivium, module_engine_process
+
+# Class API: defaults to en_core_web_sm
+pipeline = Taivium(spacy_model_name="en_core_web_sm")
+
+# Switch to another installed spaCy model
+pipeline = Taivium(spacy_model_name="en_core_web_lg")
+
+# module_engine_process options
+result = module_engine_process(
+    "Alice emailed alice@acme.com",
+    options={"spacy_model_name": "en_core_web_lg"},
+)
+```
+
+### 7. Compliance-Friendly Organization Detection
+
+For compliance and regulatory contexts, use a curated list of known organizations. Organizations on the list are detected with **0.95 confidence** (vs. 0.55 for ML-based detection), providing auditable, rule-based detection suitable for GDPR/HIPAA/CCPA documentation.
+
+```python
+from taivium.engine import Taivium
+
+known_clients = [
+    "Acme Corporation",
+    "Beta Industries", 
+    "Gamma Enterprises"
+]
+
+pipeline = Taivium()
+
+# Pass known_orgs to collect_evidence()
+result = pipeline.process(
+    "We partnered with Acme Corporation on Q3 deliverables.",
+    known_orgs=known_clients
+)
+```
+
+**Why organization lists strengthen compliance:**
+
+- **Auditability**: You can justify exactly which organizations are anonymized (transparent rules)
+- **Reproducibility**: Deterministic detection (same input → same output always)
+- **Precision**: Near-zero false positives with curated lists
+- **Documentation**: "We anonymize organizations on this approved list" is easier to defend to auditors than "the ML model thinks so"
+
+**Detection Tier System (recommended for robust compliance):**
+
+```python
+# Tier 1: Known clients (confidence 0.95, rule-based)
+org_list_evidence = org_list_evidence(text, known_orgs=["Acme Corp", "Beta Inc"])
+
+# Tier 2: Unknown organizations (confidence 0.55, ML-based)
+gliner_evidence = gliner_evidence(text, targets=["ORGANIZATION"])
+
+# Tier 3 (optional): Manual review queue for confidence 0.50-0.55
+# → enables compliance audit trails: "approved_list" vs "ml_detected" vs "manual_review"
+```
+
+**Best Practice Hybrid Approach:**
+
+```python
+pipeline = Taivium()
+
+text = "Acme Corp and unknown partners discussed terms."
+
+result = pipeline.process(
+    text,
+    known_orgs=["Acme Corp"],  # Tier 1: fast, auditable
+    # GLiNER runs automatically (Tier 2)
+)
+
+# Inspect detection sources
+for entity in result.entities:
+    if entity.source == "org_list":
+        print(f"Auditable: {entity.text} (approved list)")
+    elif entity.source == "gliner":
+        print(f"ML-detected: {entity.text} (review recommended)")
+```
+
+---
+
+## Environment Configuration
+
+Taivium respects environment variables for logging and audit control. **Your application is responsible** for loading `.env` and configuring logging — Taivium itself does not call `logging.basicConfig()` (library best practice).
+
+### Controlling Logger Output
+
+**In your application code** (before importing Taivium):
+
+```python
+import logging
+
+# Suppress engine logs
+logging.getLogger("taivium.engine").setLevel(logging.WARNING)
+
+# Suppress audit logs
+logging.getLogger("taivium.audit").setLevel(logging.WARNING)
+
+# Or configure all loggers at once
+logging.basicConfig(level=logging.WARNING)
+
+from taivium.engine import Taivium
+pipeline = Taivium()
+```
+
+### Audit Output Control
+
+Disable audit JSON emission to stdout:
+
+```python
+import os
+os.environ["TAIVIUM_AUDIT_STDOUT"] = "0"
+
+from taivium.engine import Taivium
+pipeline = Taivium()
+```
+
+Or via shell:
+
+```bash
+export TAIVIUM_AUDIT_STDOUT=0
+python your_app.py
+```
+
+Allowed values: `0`, `false`, `off`, `no`.  
+Default: `1` (enabled).
+
+### Example: Loading `.env` in Your App
+
+If you want to use `.env` files for configuration:
+
+```python
+import os
+import logging
+from pathlib import Path
+
+# Load .env (your app's responsibility)
+def load_dotenv(path: Path) -> None:
+    if not path.is_file():
+        return
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+load_dotenv(Path(__file__).parent / ".env")
+
+# Your app configures logging
+level = getattr(logging, os.getenv("LOG_LEVEL", "WARNING"))
+logging.basicConfig(level=level)
+
+# Now use Taivium
+from taivium.engine import Taivium
+pipeline = Taivium()
+```
+
 ---
 
 ## What Gets Detected
@@ -348,6 +538,30 @@ See [`examples/`](examples/):
 - privacy pipeline  
 - OpenAI client  
 - custom detectors  
+
+---
+
+## Development & Performance
+
+### Performance Evaluation
+
+Run performance benchmarks against ai4privacy/pii-masking-300k dataset:
+
+```bash
+# Full evaluation (all detectors)
+python3 performance_eval/main_evaluation.py
+
+# Fast iteration (Taivium only, cached baselines)
+python3 performance_eval/main_evaluation.py --skip-baselines
+```
+
+View report: `web/index.html`
+
+**Hardware Environment:**  
+See [HARDWARE.md](HARDWARE.md) for machine specifications and performance metrics.
+
+**Setup Details:**  
+See [`performance_eval/EVALUATION_SETUP.md`](performance_eval/EVALUATION_SETUP.md) for dataset info, detectors, and evaluation methodology.
 
 ---
 

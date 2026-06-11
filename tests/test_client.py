@@ -16,13 +16,14 @@ import pytest
 import taivium.client as client_mod
 from taivium.client import PrivacyClient, _patch_response_content
 from taivium.engine import (
-    PolicyAction,
     PolicyEngine,
-    PolicyRule,
     Taivium,
-    RiskLevel,
     reverse_transform,
 )
+from taivium.defs import (RiskLevel,
+                            PolicyAction,
+                            PolicyRule
+                        )
 from taivium.session_store import InMemorySessionStore
 
 

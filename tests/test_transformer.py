@@ -216,3 +216,13 @@ class TestMultipleEntities:
     def test_empty_predictions_returns_empty_list(self, monkeypatch):
         monkeypatch.setattr(tr, "_get_ner_pipeline", lambda: _pipeline([]))
         assert tr.transformer_evidence("No entities here.") == []
+
+
+# --- Exception handling (lines 62-72) ---
+def test_transformer_evidence_broad_exception_handling(monkeypatch):
+    """Broad Exception handling in transformer_evidence catches all errors."""
+    def _error(_text):
+        raise Exception("Unexpected error")  # Not RuntimeError or ValueError
+    monkeypatch.setattr(tr, "_get_ner_pipeline", lambda: _error)
+    result = tr.transformer_evidence("test")
+    assert result == []

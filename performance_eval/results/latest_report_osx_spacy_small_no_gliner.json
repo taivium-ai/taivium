@@ -1,0 +1,19 @@
+{
+  "timestamp": "2026-06-08T23:16:29Z",
+  "dataset": "ai4privacy/pii-masking-300k",
+  "profile": "privacy",
+  "commit_hash": "bfe401be519c94d146e990ea0cb0c64588efbf79",
+  "hardware": {
+    "device": "MacBook Pro",
+    "chip": "Apple M2 Pro",
+    "cores": 10
+  },
+  "models": {
+    "taivium_detection (en_core_web_sm)": {
+      "precision": 0.4581057834282265,
+      "recall": 0.5135549872122762,
+      "f1": 0.484248241483026,
+      "timing_ms": 14.340172431109606
+    }
+  }
+}

@@ -189,7 +189,7 @@ Module-level utility in `engine.py` that replaces every entity ID token in `text
 
 **Methods:**
 - Regex
-- spaCy NER
+- Adaptive NER routing (spaCy for short structured payloads, GLiNER for longer contextual payloads)
 - Transformer-based NER
 - Optional LLM tagging
 
@@ -201,10 +201,15 @@ The detector stage emits evidence from all enabled detector layers, then resolve
 Input Text
     |
     v
-[Layer 1] spaCy evidence
+[Layer 0] org_list evidence (opt-in: known_orgs=[...])
     |
     v
-[Layer 2] regex evidence
+[Layer 1] regex evidence (always on)
+    |
+    v
+[Layer 2] adaptive NER route
+    - len(text) < 100  -> spaCy
+    - len(text) >= 100 -> GLiNER
     |
     v
 [Layer 3] transformer evidence (opt-in: use_transformer=True)
@@ -222,7 +227,123 @@ canonicalize_spans() -> canonical entity set
 find_recurrences() -> recurrence entities (optional, non-overlapping)
 ```
 
+**Layer 0: Organization List (Compliance-Friendly Detection)**
+
+The organization list layer provides fast, deterministic, fully-auditable detection of known organizations before expensive ML layers. Implemented via `org_list_evidence(text, known_orgs)`, this layer uses exact-match lookup with case-insensitive matching and proper regex character escaping.
+
+**Tier System for Organization Detection:**
+
+- **Tier 1 (Curated org_list)**: Known organizations, exact-match substring detection, confidence=0.95, <1ms per text, fully auditable
+- **Tier 2 (GLiNER fallback)**: Unknown organizations, ML-based detection, confidence=0.55, 5-10ms per text
+- **Tier 3 (Optional manual review)**: Borderline cases (0.50-0.55 confidence) routed for human review
+
+**Why tier organization detection?**
+
+Organizations require explicit curation for compliance defensibility. A curated list of known organizations satisfies GDPR Article 32 (Privacy by Design) by providing deterministic, reproducible, and auditable detection that does not rely on probabilistic machine learning. GLiNER serves as a Tier 2 fallback to catch organizations not on the curated list, maximizing recall while maintaining compliance.
+
+**Confidence and Scoring:**
+
+- org_list evidence: confidence=0.95 (exact match, high precision)
+- GLiNER evidence: confidence varies by model output (typical: 0.55)
+- In canonicalization, org_list overlaps are resolved with higher weight via `SOURCE_WEIGHT["org_list"] = 1.0`
+
+**Usage:**
+
+```python
+from taivium import Taivium
+
+pipeline = Taivium()
+text = "Acme Corporation approved the request."
+known_orgs = ["Acme Corporation", "Beta Industries", "Gamma LLC"]
+
+result = pipeline.process(text, known_orgs=known_orgs)
+# Acme Corporation is detected with source="org_list", confidence=0.95
+# Falls back to GLiNER for unknown organizations
+```
+
+**Implementation:**
+
+`org_list_evidence()` is invoked conditionally in `collect_evidence()`:
+```python
+if known_orgs:
+    evidence += org_list_evidence(text, known_orgs)
+```
+
+The function returns a list of `Evidence` objects with `source="org_list"` and `label="ORG"`. Each organization is detected by exact substring matching with case-insensitive lookup and Unicode-safe character handling.
+
+---
+
+**Layer 1a: Structured Field Detection (Context-Keyed Entity Values)**
+
+The regex layer includes generalized field detection that extracts sensitive values from structured formats (JSON, YAML, Markdown, XML) based on field key names. This increases recall for values that might otherwise be missed by generic NER patterns.
+
+**Principle:** Only the **VALUE** is labeled with the entity type, not the key. This prevents false positives on field keys themselves (e.g., `"email"` field key is not labeled as EMAIL, only the email value is).
+
+**Supported Formats:**
+
+- JSON/YAML: `"email": "john@example.com"` or `'email': 'john@example.com'`
+- Markdown: `- Email: john@example.com` or `**Email:** john@example.com`
+- XML: `<email>john@example.com</email>`
+
+**Field Key Mapping:**
+
+Maps 50+ field key names to canonical entity labels:
+
+| Label | Mapped Keys | Confidence |
+|-------|------------|------------|
+| `EMAIL` | email, mail, inbox, sender, recipient, from, to, cc, bcc, address | 0.90 |
+| `PHONE` | phone, mobile, cell, telephone, contact, number | 0.80 |
+| `DATE` | date, created, updated, birth_date, dob, issued, expires | 0.75 |
+| `USERNAME` | username, user, participant_id, caller, login, handle | 0.72 |
+| `ORG` | company, organization, employer, organization_name, org | 0.72 |
+| `API_KEY` | api_key, apikey, secret, token, access_key | 0.93 |
+| `IP` | ip, ip_address, host, server, endpoint | 0.88 |
+| `SOCIALNUMBER` | ssn, social_security, sin, nric, id_number, tax_id | 0.85 |
+| `PERSON` | name, first_name, last_name, creator, author, contact_person | 0.72 |
+
+**Validation and Safety:**
+
+- **Deduplication**: Skips spans that have already been detected by higher-confidence detectors or field detection
+- **EMAIL validation for USERNAME**: If a field is labeled as `username` but the value is a valid email, the field is skipped to prevent misclassification
+- **Underscore check**: USERNAME values starting with underscore are filtered to avoid false positives
+- **Boundary checking**: Properly handles whitespace trimming and capture group offset calculation to ensure span accuracy
+
+**Implementation:**
+
+The structured field detector runs as part of `regex_evidence()` after pattern-based detection and scans the text for field key + value combinations using multi-format regex patterns. For each matched field:
+
+1. Extract the value from the appropriate capture group (1 for JSON/YAML, 2 for Markdown, 3 for XML)
+2. Identify the field key and map it to a canonical label via `_FIELD_KEY_LABEL_MAP`
+3. Validate the value is not already detected or is not a false positive
+4. Apply label-specific confidence and emit evidence with `source="regex"`
+
+**Example:**
+
+```python
+text = """
+{
+  "email": "alice@example.com",
+  "phone": "+1-555-1234",
+  "username": "alice_smith",
+  "organization": "Acme Corp"
+}
+"""
+
+# Field detection finds and labels:
+# - "alice@example.com" → EMAIL (confidence 0.90)
+# - "+1-555-1234" → PHONE (confidence 0.80)
+# - "alice_smith" → USERNAME (confidence 0.72)
+# - "Acme Corp" → ORG (confidence 0.72)
+```
+
+**Privacy Note:** Field detection is fully deterministic and rule-based. No ML models or probabilistic classifiers are involved, making it suitable for compliance-sensitive deployments.
+
+---
+
 * Each layer runs independently; failures in one layer do not block others
+* org_list is checked first (Layer 0) as an opt-in compliance feature
+* Structured field detection runs as part of Layer 1 (regex), extracting values from JSON/YAML/Markdown/XML formats
+* Adaptive threshold defaults to 100 characters (`short_text_threshold`)
 * Evidence is merged first, then canonicalized
 * Canonicalization uses a sweep-line overlap-cluster algorithm: overlapping evidence spans are grouped into connected clusters, then each cluster is resolved to one canonical entity via weighted label voting
 * After canonicalization, the semantic recurrence layer finds repeated surface-form mentions only for recurrence-eligible canonical entities (default: `EMAIL`, `PHONE`, `API_KEY`; gated heuristics for `PERSON` and `ORG`) and adds them as new, non-overlapping entities with source="recurrence", inheriting canonical `evidence_sources` and `confidence`. Matching uses exact substring scanning plus manual boundary validation (Unicode-aware character classes), not regex `\\b` heuristics.
@@ -240,7 +361,23 @@ Evidence from multiple detectors can conflict. `canonicalize_spans(text, evidenc
 4. **Schedule** — solve weighted interval scheduling via DP to select the globally optimal, strictly non-overlapping candidate set. Tie-breaking is deterministic using `(score, coverage, -count, -start, -end, label)` keys so equal-score ties never depend on iteration order.
 5. **Emit** — produce one `Entity(source="canonical")` per selected candidate with retained `evidence_sources` (sorted union of contributing detector sources) and averaged `confidence`; the selected set is non-overlapping by construction.
 
+**SOURCE_WEIGHT Configuration**
 
+Each detection source is assigned a reliability weight used during canonicalization to prioritize high-confidence sources when evidence conflicts:
+
+| Source | Weight | Rationale |
+|--------|--------|-----------|
+| `org_list` | 1.0 | Curated organization list: very high precision for known orgs, fully auditable |
+| `regex` | 0.9 | Rule-based: high precision, deterministic, no ML variance |
+| `spacy` | 0.8 | Statistical NER: good precision, moderate recall |
+| `gliner` | 0.8 | Neural NER: good precision, higher recall than spaCy |
+| `transformer` | 0.7 | Transformer-based: experimental, lower priority by default |
+| `llm` | 0.6 | LLM-based: variable precision, lower priority |
+| `recurrence` | 0.5 | Repeated entity: inherits from canonical source |
+
+Higher weights indicate more reliable sources. When multiple detectors identify overlapping entity candidates, canonicalization uses weighted scoring to select the best candidate. `org_list` has the highest weight, ensuring curated organizations are always prioritized over ML-detected alternatives.
+
+---
 #### 3.2.1.2 Canonicalization and Span Integrity Contract
 
 The canonicalization and transformation pipeline must satisfy the following hard invariants:
@@ -587,6 +724,68 @@ If no salt is provided, entity IDs are globally stable and can be linked across 
 
 Both layers are fully implemented and opt-in. `transformer_evidence()` uses `dslim/bert-base-NER` via HuggingFace `transformers`; `llm_evidence()` uses `gpt-4o-mini` via the OpenAI API. Enable them with `use_transformer=True` and `use_llm=True` on `Taivium`. All layers run additively — each adds to the evidence pool; `canonicalize_spans()` resolves conflicts.
 
+#### 3.2.5.1 GLiNER Tokenization Optimization
+
+**Problem (Resolved):** Long-form text detection was producing warnings like "Sentence of length 429 has been truncated to 384" during GLiNER inference. This was caused by a **tokenizer mismatch**:
+
+- **spaCy blank tokenizer** (used naively) produces ~92 tokens for test text
+- **GLiNER's DeBERTa tokenizer** (actual inference engine) produces ~115 tokens for the same text
+- Result: 384 spaCy tokens → 389-391 DeBERTa tokens, exceeding GLiNER's hard 384-token limit
+- Impact: Entities at chunk boundaries were being truncated during inference, causing entity loss (e.g., "Bob Smith", location entities disappeared)
+
+**Solution:** Switch from spaCy blank tokenizer to GLiNER's native DeBERTa tokenizer for chunking, using offset mapping for exact character boundary reconstruction.
+
+**Implementation Details:**
+
+1. **Extract tokenizer from model** → `gliner_tokenizer = model.data_processor.transformer_tokenizer`
+2. **Tokenize with offset mapping** → `tokenizer(text, return_offsets_mapping=True, add_special_tokens=False)`
+3. **Reserve special tokens** → `max_content_tokens = 384 - 2` (for [CLS]/[SEP])
+4. **Chunk by token boundaries** → Use offset mapping to split text at exact token boundaries
+5. **Fallback support** → When tokenizer unavailable (mocked tests), gracefully fall back to spaCy blank
+
+**Performance Gains:**
+
+| Tokenizer | Time per Call | Accuracy |
+|-----------|---------------|----------|
+| spaCy blank | 6.15ms | ❌ Inaccurate (mismatch) |
+| **DeBERTa** | **2.46ms** | ✅ Perfect (matches GLiNER) |
+| **Improvement** | **2.5x faster** | **Eliminates truncation** |
+
+DeBERTa is faster due to HuggingFace's optimized C-based implementation, despite producing more tokens (1,753 vs 1,736) due to subword tokenization.
+
+**Chunk Verification (1,426-word test text):**
+
+*Before (spaCy):*
+```
+Chunk 0: 391 tokens ❌ EXCEEDS 384 (truncated)
+Chunk 1: 390 tokens ❌ EXCEEDS 384 (truncated)
+Chunk 2: 389 tokens ❌ EXCEEDS 384 (truncated)
+Chunk 3: 390 tokens ❌ EXCEEDS 384 (truncated)
+Chunk 4: 332 tokens ✓ OK
+```
+
+*After (DeBERTa):*
+```
+Chunk 0: 384 tokens ✓ OK
+Chunk 1: 384 tokens ✓ OK
+Chunk 2: 384 tokens ✓ OK
+Chunk 3: 384 tokens ✓ OK
+Chunk 4: 355 tokens ✓ OK
+```
+
+**Code Location:** [src/taivium/transformer_gliner.py](../src/taivium/transformer_gliner.py) → `_chunk_text_for_gliner()` function
+
+**Test Coverage:** [tests/test_transformer_gliner.py](../../tests/test_transformer_gliner.py) (47 tests) → `test_chunk_text_for_gliner_exact_token_boundaries` validates token limits
+
+**Full Pipeline Performance:**
+- With DeBERTa chunking: 647ms (accurate, no truncation)
+- Tokenization is only ~2-3% of total pipeline time
+- GLiNER inference: ~70% of total
+
+**Key Insight:** Using the exact tokenizer that the inference engine uses ensures chunk accuracy, while HuggingFace's optimized implementation provides a 2.5x speedup over spaCy's Python-based tokenizer. This is a rare optimization where correctness and performance both improve.
+
+For detailed technical analysis, see [docs/GLINER_TOKENIZATION_OPTIMIZATION.md](GLINER_TOKENIZATION_OPTIMIZATION.md).
+
 ### Regex Confidence Calibration
 
 Regex detectors now use calibrated confidence values (email: 0.90, phone: 0.80, API key: 0.95) instead of absolute 0.99/1.0. This reflects the real-world risk of overmatching and false positives in logs, code, and noisy text.
@@ -595,6 +794,8 @@ Regex detectors now use calibrated confidence values (email: 0.90, phone: 0.80, 
 
 
 The spaCy model is lazy-loaded on the first call to `PrivacyPipeline.process()`. The first call incurs a one-time startup cost (typically ~300–400 ms) while the model is loaded into memory. All subsequent calls run in ~10–20 ms. The model is loaded with unused pipeline components disabled (`tagger`, `parser`, `lemmatizer`, `attribute_ruler`) to minimise inference latency.
+
+By default, Taivium uses `en_core_web_sm`, and the model can be configured with `Taivium(spacy_model_name="<model>")` or `module_engine_process(..., options={"spacy_model_name": "<model>"})`.
 
 **Testing Environment:**
 - Macbook Pro M2 (Apple Silicon)
