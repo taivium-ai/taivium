@@ -194,7 +194,7 @@ def gliner_evidence(text: str, targets: Optional[List[str]] = None) -> List[Any]
             model,
             chunks,
             target_labels,
-            threshold=0.55,
+            threshold=0.4,
         )
         seen_spans: set[Tuple[int, int, str]] = set()
 
