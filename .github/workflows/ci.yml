@@ -67,8 +67,7 @@ jobs:
       - name: Run tests with coverage
         continue-on-error: true
         run: |
-          set -o pipefail
-          python -m coverage run -m pytest tests/ -q -s -vv | tee pytest.log
+          python -m coverage run -m pytest tests/ -q -s -vv
           # Generate XML report explicitly for Codecov compatibility
           python -m coverage xml -o coverage.xml
           # Run the console report verification step

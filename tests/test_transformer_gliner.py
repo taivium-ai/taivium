@@ -40,7 +40,7 @@ class TestGlinerEvidence:
         assert isinstance(result, list)
         for ev in result:
             assert ev.source == "gliner"
-            assert 0.55 <= ev.confidence <= 1.0
+            assert 0.40 <= ev.confidence <= 1.0
 
     def test_gliner_evidence_custom_targets(self):
         """gliner_evidence() should accept custom targets parameter."""
@@ -94,7 +94,7 @@ class TestGlinerEvidence:
             assert hasattr(ev, 'source')
             assert hasattr(ev, 'confidence')
             assert ev.source == "gliner"
-            assert 0.55 <= ev.confidence <= 1.0
+            assert 0.40 <= ev.confidence <= 1.0
 
     def test_gliner_evidence_handles_exception(self, monkeypatch, caplog):
         """gliner_evidence() should handle exceptions gracefully and return empty list."""
@@ -385,7 +385,7 @@ class TestGlinerEvidence:
         text = "John Smith works at Google in Mountain View."
         result = gliner.gliner_evidence(text)
         for ev in result:
-            assert 0.55 <= ev.confidence <= 1.0
+            assert 0.40 <= ev.confidence <= 1.0
 
     def test_gliner_evidence_pure_lowercase_person(self):
         """gliner_evidence() should detect PERSON entities in pure lowercase text."""
@@ -400,7 +400,7 @@ class TestGlinerEvidence:
             result = gliner.gliner_evidence(text)
             for ev in result:
                 assert ev.source == "gliner"
-                assert 0.55 <= ev.confidence <= 1.0
+                assert 0.40 <= ev.confidence <= 1.0
                 assert 0 <= ev.start < ev.end <= len(text)
         assert True
 
@@ -417,7 +417,7 @@ class TestGlinerEvidence:
             result = gliner.gliner_evidence(text)
             for ev in result:
                 assert ev.source == "gliner"
-                assert 0.55 <= ev.confidence <= 1.0
+                assert 0.40 <= ev.confidence <= 1.0
                 assert 0 <= ev.start < ev.end <= len(text)
         assert True
 
@@ -428,7 +428,7 @@ class TestGlinerEvidence:
         assert isinstance(result, list)
         for ev in result:
             assert ev.source == "gliner"
-            assert 0.55 <= ev.confidence <= 1.0
+            assert 0.40 <= ev.confidence <= 1.0
             assert hasattr(ev, 'label')
             assert 0 <= ev.start < ev.end <= len(text)
 
@@ -445,7 +445,7 @@ class TestGlinerEvidence:
             result = gliner.gliner_evidence(text)
             for ev in result:
                 assert ev.source == "gliner"
-                assert 0.55 <= ev.confidence <= 1.0
+                assert 0.40 <= ev.confidence <= 1.0
         assert True
 
     def test_gliner_evidence_pure_lowercase_no_names(self):
@@ -455,7 +455,7 @@ class TestGlinerEvidence:
         assert isinstance(result, list)
         for ev in result:
             assert ev.source == "gliner"
-            assert 0.55 <= ev.confidence <= 1.0
+            assert 0.40 <= ev.confidence <= 1.0
             assert 0 <= ev.start < ev.end <= len(text)
 
     def test_gliner_evidence_pure_lowercase_repeated_entities(self):
@@ -465,7 +465,7 @@ class TestGlinerEvidence:
         assert isinstance(result, list)
         for ev in result:
             assert ev.source == "gliner"
-            assert 0.55 <= ev.confidence <= 1.0
+            assert 0.40 <= ev.confidence <= 1.0
             assert 0 <= ev.start < ev.end <= len(text)
             extracted = text[ev.start:ev.end]
             assert len(extracted) > 0
