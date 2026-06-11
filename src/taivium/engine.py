@@ -349,9 +349,9 @@ def assert_text_span_integrity(text: str, entities: List[Entity]) -> None:
             )
 
 label_prior: Dict[str, float] = {
-        "PERSON": 0.05,
-        "ORG": 0.05,
-        "LOCATION": 0.05,
+        "PERSON": 0.1,
+        "ORG": 0.1,
+        "LOCATION": 0.1,
         "EMAIL": 0.1,
         "PHONE": 0.1,
         "API_KEY": 0.15,
