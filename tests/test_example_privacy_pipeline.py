@@ -66,7 +66,7 @@ class TestSection1DefaultPipeline:
         the underlying spaCy model; only multi-token names are asserted here.
         """
         anonymized = default_result["anonymized"]
-        print(default_result)
+        print(anonymized)
         assert "Alice Johnson" not in anonymized
         assert "Bob Smith" not in anonymized
 
