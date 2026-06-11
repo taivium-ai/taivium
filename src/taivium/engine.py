@@ -482,7 +482,7 @@ def canonicalize_spans(  # pylint: disable=too-many-locals,too-many-branches,too
         exclude_count = best_count[i - 1] if i > 0 else 0
 
         include_key = (
-            round(include_score,6),
+            include_score,
             include_cov,
             -include_count,
             -candidate.start,
@@ -491,7 +491,7 @@ def canonicalize_spans(  # pylint: disable=too-many-locals,too-many-branches,too
         )
         exclude_terminal = best_terminal[i - 1] if i > 0 else (0, 0, "")
         exclude_key = (
-            round(exclude_score,6),
+            exclude_score,
             exclude_cov,
             -exclude_count,
             exclude_terminal[0],
