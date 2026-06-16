@@ -57,7 +57,7 @@ Rules:
 - Output no other text, markdown, or explanation.
 
 Example output:
-[{"text": "Alice Smith", "type": "PERSON"}, {"text": "alice@example.com", "type": "EMAIL"}]
+[{"text": "Alex Smith", "type": "PERSON"}, {"text": "user@example.com", "type": "EMAIL"}]
 """
 
 # Labels the LLM is permitted to emit; anything else is skipped.
