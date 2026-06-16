@@ -522,3 +522,42 @@ def test_parse_module_engine_options_rejects_unsupported_type():
 
     assert parsed is None
     assert err == "Options must be a dict or JSON string, got int"
+
+
+def test_smoke_tenant_isolation_produces_different_ids():
+    """Different tenants processing the same text must receive different anonymized IDs."""
+    text = "Email: alice@example.com"
+
+    result_acme = eng.module_engine_process(text, options={"tenant_id": "tenant-acme"})
+    result_xyz = eng.module_engine_process(text, options={"tenant_id": "tenant-xyz"})
+
+    acme_ids = set(result_acme["mapping"].keys())
+    xyz_ids = set(result_xyz["mapping"].keys())
+
+    assert acme_ids != xyz_ids, (
+        f"Tenant isolation broken: both tenants produced identical IDs {acme_ids}"
+    )
+
+
+def test_smoke_no_tenant_produces_consistent_ids():
+    """Processing the same text twice without tenant_id should yield identical IDs."""
+    text = "Email: bob@example.com"
+
+    result1 = eng.module_engine_process(text, options={})
+    result2 = eng.module_engine_process(text, options={})
+
+    assert set(result1["mapping"].keys()) == set(result2["mapping"].keys()), (
+        "Non-tenant processing is non-deterministic: IDs differ across calls"
+    )
+
+
+def test_smoke_tenant_anonymized_text_differs():
+    """Anonymized output text should differ across tenants for the same input."""
+    text = "Contact alice@example.com for support."
+
+    result_acme = eng.module_engine_process(text, options={"tenant_id": "tenant-acme"})
+    result_xyz = eng.module_engine_process(text, options={"tenant_id": "tenant-xyz"})
+
+    assert result_acme["anonymized"] != result_xyz["anonymized"], (
+        "Anonymized output is identical across tenants"
+    )
