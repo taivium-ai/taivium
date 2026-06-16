@@ -1,4 +1,5 @@
 """Tests for per-request tenant-aware session store wiring."""
+from concurrent.futures import ThreadPoolExecutor
 import json
 import pytest
 from unittest.mock import Mock, patch, MagicMock
@@ -317,6 +318,78 @@ def test_parse_module_engine_options_accepts_json_dict_string():
 
     assert err is None
     assert parsed == {"tenant_id": "tenant-acme", "use_llm": True}
+
+
+def test_concurrent_multi_agent_same_tenant_stable_pseudonyms(monkeypatch):
+    """Concurrent agent calls for one tenant should yield identical pseudonyms."""
+    fakeredis = pytest.importorskip("fakeredis", reason="fakeredis not installed")
+    redis = pytest.importorskip("redis", reason="redis not installed")
+
+    fake_server = fakeredis.FakeServer()
+    fake_client = fakeredis.FakeRedis(server=fake_server, decode_responses=True)
+    monkeypatch.setattr(redis, "from_url", lambda *_a, **_kw: fake_client)
+
+    monkeypatch.setenv("REDIS_URL", "redis://shared-fake:6379")
+    monkeypatch.setenv("SESSION_TTL_SECONDS", "3600")
+    eng._engine_cache.clear()
+
+    text = "Agent request: Alice Johnson email alice@example.com at Acme Corp"
+    tenant_id = "tenant-stress-acme"
+
+    def _agent_call(_: int):
+        result = eng.module_engine_process(text, options={"tenant_id": tenant_id})
+        return frozenset(result["mapping"].keys())
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        id_sets = list(pool.map(_agent_call, range(80)))
+
+    assert id_sets, "Expected at least one mapping from concurrent calls"
+    assert len(set(id_sets)) == 1, "Same-tenant pseudonyms drifted across agents"
+
+
+def test_concurrent_multi_agent_cross_tenant_no_collisions(monkeypatch):
+    """Concurrent calls across tenants must not collide and must stay tenant-isolated in Redis."""
+    fakeredis = pytest.importorskip("fakeredis", reason="fakeredis not installed")
+    redis = pytest.importorskip("redis", reason="redis not installed")
+
+    fake_server = fakeredis.FakeServer()
+    fake_client = fakeredis.FakeRedis(server=fake_server, decode_responses=True)
+    monkeypatch.setattr(redis, "from_url", lambda *_a, **_kw: fake_client)
+
+    monkeypatch.setenv("REDIS_URL", "redis://shared-fake:6379")
+    monkeypatch.setenv("SESSION_TTL_SECONDS", "3600")
+    eng._engine_cache.clear()
+
+    text = "Alice Johnson uses alice@example.com"
+    tenant_a = "tenant-alpha"
+    tenant_b = "tenant-beta"
+
+    def _agent_call(idx: int):
+        tenant_id = tenant_a if idx % 2 == 0 else tenant_b
+        result = eng.module_engine_process(text, options={"tenant_id": tenant_id})
+        return tenant_id, frozenset(result["mapping"].keys())
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        results = list(pool.map(_agent_call, range(120)))
+
+    ids_a = {id_set for tenant, id_set in results if tenant == tenant_a}
+    ids_b = {id_set for tenant, id_set in results if tenant == tenant_b}
+
+    assert len(ids_a) == 1, "Tenant A produced unstable pseudonyms across agents"
+    assert len(ids_b) == 1, "Tenant B produced unstable pseudonyms across agents"
+
+    only_a = next(iter(ids_a))
+    only_b = next(iter(ids_b))
+    assert only_a.isdisjoint(only_b), "Cross-tenant pseudonym collision detected"
+
+    redis_keys = list(fake_client.scan_iter("taivium:*:session:tenant-session:*"))
+    decoded_keys = {
+        key.decode("utf-8") if isinstance(key, bytes) else key
+        for key in redis_keys
+    }
+
+    assert any(k.startswith("taivium:tenant-alpha:session:tenant-session:") for k in decoded_keys)
+    assert any(k.startswith("taivium:tenant-beta:session:tenant-session:") for k in decoded_keys)
 
 
 # ---------------------------------------------------------------------------

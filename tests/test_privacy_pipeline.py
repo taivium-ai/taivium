@@ -1,5 +1,6 @@
 """Tests for the evidence-first Taivium flow."""
 
+import random
 import unicodedata
 
 import pytest
@@ -231,11 +232,122 @@ def test_identityengine_normalizes_unicode_forms() -> None:
     assert engine.generate_id(nfc, label) == engine.generate_id(nfd, label)
 
 
+@pytest.fixture(name="seeded_identity_variants")
+def fixture_seeded_identity_variants() -> dict[str, list[str]]:
+    """Seeded baseline fixture for deterministic mutation-variant coverage."""
+    rng = random.Random(1337)
+
+    baseline = [
+        "John Smith",
+        "john smith",
+        "John  Smith",
+        "JOHN SMITH",
+        " John Smith ",
+        "John Smith.",
+    ]
+
+    semantic_mutations = [
+        "Mr. John Smith",
+        "John A. Smith",
+        "J. Smith",
+    ]
+
+    rng.shuffle(baseline)
+    rng.shuffle(semantic_mutations)
+
+    return {
+        "baseline": baseline,
+        "semantic_mutations": semantic_mutations,
+    }
+
+
+def test_identityengine_seeded_baseline_variants_are_stable(
+    seeded_identity_variants: dict[str, list[str]],
+) -> None:
+    """Seeded baseline variants should collapse to one deterministic PERSON ID."""
+    engine = IdentityEngine(salt="fixture-seed-1337")
+    baseline = seeded_identity_variants["baseline"]
+
+    # Repeated-run assertion: same input corpus should produce identical IDs every run.
+    run_fingerprints: set[tuple[str, ...]] = set()
+    for _ in range(20):
+        ids = tuple(engine.generate_id(text, "PERSON") for text in baseline)
+        run_fingerprints.add(ids)
+
+    assert len(run_fingerprints) == 1
+    assert len(set(run_fingerprints.pop())) == 1
+
+
+def test_identityengine_semantic_mutations_are_deterministic_per_variant(
+    seeded_identity_variants: dict[str, list[str]],
+) -> None:
+    """Semantic mutations may map differently, but each mutation must be stable across runs."""
+    engine = IdentityEngine(salt="fixture-seed-1337")
+
+    for variant in seeded_identity_variants["semantic_mutations"]:
+        ids = {engine.generate_id(variant, "PERSON") for _ in range(50)}
+        assert len(ids) == 1, f"Variant {variant!r} did not produce a stable ID"
+
+
+def test_pronoun_drift_scenario_has_repeatable_outputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pronoun-heavy input should produce deterministic, repeatable mappings across runs."""
+    import taivium.engine as pp  # pylint: disable=import-outside-toplevel
+
+    text = (
+        "John Smith went to Paris. He met Sarah. "
+        "Later, he emailed her. John Smith thanked her."
+    )
+
+    def _span(fragment: str, occurrence: int = 1) -> tuple[int, int]:
+        start = -1
+        cursor = 0
+        for _ in range(occurrence):
+            start = text.index(fragment, cursor)
+            cursor = start + len(fragment)
+        return start, start + len(fragment)
+
+    def _collect(_: str, **kwargs):
+        del kwargs
+        spans = [
+            (*_span("John Smith", 1), "PERSON"),
+            (*_span("He", 1), "PERSON"),
+            (*_span("Sarah", 1), "PERSON"),
+            (*_span("he", 1), "PERSON"),
+            (*_span("her", 1), "PERSON"),
+            (*_span("John Smith", 2), "PERSON"),
+            (*_span("her", 2), "PERSON"),
+            (*_span("Paris", 1), "LOCATION"),
+        ]
+        return [Evidence(s, e, label, "regex", 0.99) for s, e, label in spans]
+
+    monkeypatch.setattr(pp, "collect_evidence", _collect)
+
+    pipeline = Taivium(id_salt="drift-fixture")
+
+    run_fingerprints: set[tuple[str, tuple[str, ...]]] = set()
+    for _ in range(15):
+        out = pipeline.process(text)
+        run_fingerprints.add((out["anonymized"], tuple(sorted(out["mapping"].keys()))))
+
+        john_ids = [
+            entity["id"]
+            for entity in out["entities"]
+            if entity["label"] == "PERSON" and entity["text"] == "John Smith"
+        ]
+        assert len(john_ids) == 2
+        assert len(set(john_ids)) == 1
+
+    assert len(run_fingerprints) == 1
+
+
 def test_pipeline_process_uses_canonical_entities(monkeypatch: pytest.MonkeyPatch) -> None:
     """End-to-end process should consume canonical entities and emit deterministic mapping."""
     import taivium.engine as pp  # pylint: disable=import-outside-toplevel
 
     def _collect(_: str, **kwargs):
+        del kwargs
         return [
             Evidence(0, 5, "PERSON", "spacy", 0.8),
             Evidence(0, 5, "PERSON", "regex", 0.99),
@@ -389,6 +501,7 @@ def test_pipeline_recurrence_replaces_all_mentions(monkeypatch: pytest.MonkeyPat
     import taivium.engine as pp  # pylint: disable=import-outside-toplevel
 
     def _collect(_: str, **kwargs) -> list:
+        del kwargs
         # spaCy only detects the first full name
         return [Evidence(0, 13, "PERSON", "spacy", 0.75)]
 
