@@ -1,5 +1,6 @@
 """Tests for the evidence-first Taivium flow."""
 
+import logging
 import random
 import unicodedata
 
@@ -447,6 +448,54 @@ def test_reverse_transform_invalid_mapping_fails_without_partial_output() -> Non
 
     # Ensure no in-place mutation happened to input text on failure path.
     assert text == "PERSON_abc met PERSON_bad at EMAIL_xyz."
+
+
+def test_process_logs_and_audit_stdout_do_not_leak_raw_pii(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Runtime logs and structured audit stdout must not include raw entity values."""
+    import taivium.engine as pp  # pylint: disable=import-outside-toplevel
+
+    text = "Contact Alice Johnson at alice@example.com"
+    email_start = text.index("alice@example.com")
+    email_end = email_start + len("alice@example.com")
+
+    def _collect(_: str, **kwargs):
+        del kwargs
+        return [Evidence(email_start, email_end, "EMAIL", "regex", 0.99)]
+
+    monkeypatch.setattr(pp, "collect_evidence", _collect)
+
+    with caplog.at_level(logging.INFO, logger="taivium.engine"):
+        pipeline = Taivium()
+        output = pipeline.process(text)
+
+    # Ensure processing still worked and redaction happened.
+    assert "alice@example.com" not in output["anonymized"]
+
+    combined_logs = "\n".join(record.getMessage() for record in caplog.records)
+    assert "alice@example.com" not in combined_logs
+    assert "Alice Johnson" not in combined_logs
+
+    audit_stdout = capsys.readouterr().out
+    assert "alice@example.com" not in audit_stdout
+    assert "Alice Johnson" not in audit_stdout
+    assert '"operation": "process"' in audit_stdout
+
+
+def test_reverse_transform_error_message_does_not_echo_input_pii() -> None:
+    """Failure messages must not include raw input PII when reverse_transform fails."""
+    pii_text = "Alice Johnson alice@example.com"
+    bad_mapping = {"PERSON_bad": {"label": "PERSON"}}
+
+    with pytest.raises(ValueError) as exc_info:
+        reverse_transform(pii_text, bad_mapping)
+
+    msg = str(exc_info.value)
+    assert "Alice Johnson" not in msg
+    assert "alice@example.com" not in msg
 
 
 

@@ -1039,7 +1039,7 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         """
         start = time.perf_counter()
 
-        logger.info("Processing text: %.60r", text[:60])
+        logger.info("Processing text payload redacted (len=%d)", len(text))
         # Step 1: collect raw detector evidence.
         evidence = collect_evidence(
             text,
