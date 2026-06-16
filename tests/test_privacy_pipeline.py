@@ -418,6 +418,37 @@ def test_reverse_transform_longest_token_first() -> None:
     assert transformed == "Hello Alice and Bob."
 
 
+def test_reverse_transform_double_reverse_is_idempotent() -> None:
+    """Calling reverse_transform twice should be a no-op on the second pass."""
+    mapping = {
+        "PERSON_abc": {"text": "Alice Johnson"},
+        "EMAIL_xyz": {"text": "alice@acme.com"},
+    }
+    text = "Hello PERSON_abc, your email is EMAIL_xyz."
+
+    once = reverse_transform(text, mapping)
+    twice = reverse_transform(once, mapping)
+
+    assert once == "Hello Alice Johnson, your email is alice@acme.com."
+    assert twice == once
+
+
+def test_reverse_transform_invalid_mapping_fails_without_partial_output() -> None:
+    """Invalid mapping should fail before any token replacement occurs."""
+    text = "PERSON_abc met PERSON_bad at EMAIL_xyz."
+    mapping = {
+        "PERSON_abc": {"text": "Alice"},
+        "PERSON_bad": {},
+        "EMAIL_xyz": {"text": "alice@acme.com"},
+    }
+
+    with pytest.raises(ValueError, match="missing 'text'"):
+        reverse_transform(text, mapping)
+
+    # Ensure no in-place mutation happened to input text on failure path.
+    assert text == "PERSON_abc met PERSON_bad at EMAIL_xyz."
+
+
 
 # -----------------------------------------------------------------------
 # find_recurrences
