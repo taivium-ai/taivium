@@ -9,11 +9,35 @@ for the long-text detection route.
 """
 # pylint: disable=import-outside-toplevel
 import logging
+import platform
 from typing import Any, List
 from functools import lru_cache
 import warnings
+
+from transformers import pipeline
+
 from ..defs import Evidence, normalize_label
 logger = logging.getLogger("taivium.backend.transformer_openai_privacy_filter")
+
+
+def _resolve_transformers_device() -> int:
+    """Resolves the transformers pipeline device index.
+
+    Returns:
+        0 when CUDA GPU is available, otherwise -1 (CPU).
+    """
+    try:
+        import torch
+    except (ModuleNotFoundError, ImportError):
+        return -1
+
+    try:
+        if torch.cuda.is_available():
+            return 0
+    except Exception:  # pylint: disable=broad-except
+        return -1
+
+    return -1
 
 # Mapping from dslim/bert-base-NER entity groups to internal labels.
 _LABEL_MAP = {
@@ -35,21 +59,38 @@ _LABEL_MAP = {
 
 @lru_cache(maxsize=1)
 def _get_openai_ner_pipeline() -> Any:
-    """Lazy-loads and caches the HuggingFace NER pipeline.
+    """Lazy-loads and caches the OpenAI privacy-filter pipeline.
 
-    Returns ``None`` when ``transformers`` is not installed or the model
-    cannot be loaded, so the evidence layer degrades gracefully.
+    On macOS, loads OpenMed's MLX pipeline. On other platforms, loads the
+    HuggingFace transformers token-classification pipeline.
+
+    Returns ``None`` when dependencies are missing or the model cannot be
+    loaded, so the evidence layer degrades gracefully.
     """
     try:
-        from huggingface_hub import snapshot_download
-        from openmed.mlx.inference import PrivacyFilterMLXPipeline
-        # Downloads the Apple Silicon optimized 8-bit model weights
-        model_path = snapshot_download("OpenMed/privacy-filter-multilingual-mlx-8bit")
-        return PrivacyFilterMLXPipeline(model_path)
+        if platform.system() == "Darwin":
+            from huggingface_hub import snapshot_download
+            from openmed.mlx.inference import PrivacyFilterMLXPipeline
+
+            # Downloads the Apple Silicon optimized 8-bit model weights.
+            model_path = snapshot_download("OpenMed/privacy-filter-multilingual-mlx-8bit")
+            return PrivacyFilterMLXPipeline(model_path)
+
+        device = _resolve_transformers_device()
+        if device >= 0:
+            logger.info("Using transformers pipeline on GPU device %s", device)
+        else:
+            logger.info("Using transformers pipeline on CPU")
+        return pipeline(
+            task="token-classification",
+            model="openai/privacy-filter",
+            device=device,
+        )
     except (ModuleNotFoundError, ImportError, OSError, RuntimeError):
         warning_text = (
-            "Transformer NER pipeline unavailable. "+
-            "Install 'transformers' and 'torch' for transformer-based evidence."
+            "Transformer NER pipeline unavailable. "
+            "On macOS install 'openmed.mlx' and 'huggingface_hub'; "
+            "on other platforms install 'transformers' and a supported backend."
         )  # noqa: E501
         warnings.warn(
             warning_text,

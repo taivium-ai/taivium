@@ -95,8 +95,10 @@ class TestOpenaiPrivacyFilterEvidence:
         assert result == []
 
     def test_get_openai_ner_pipeline_success(self, monkeypatch):
-        """Loader should return initialized pipeline when dependencies are available."""
+        """Loader should return initialized MLX pipeline on macOS."""
         openai_filter._get_openai_ner_pipeline.cache_clear()
+
+        monkeypatch.setattr(openai_filter.platform, "system", lambda: "Darwin")
 
         hf_module = types.ModuleType("huggingface_hub")
         hf_module.snapshot_download = lambda _repo: "/tmp/fake-model"
@@ -126,6 +128,8 @@ class TestOpenaiPrivacyFilterEvidence:
         """Known loader/import failures should return None and warn."""
         openai_filter._get_openai_ner_pipeline.cache_clear()
 
+        monkeypatch.setattr(openai_filter.platform, "system", lambda: "Darwin")
+
         hf_module = types.ModuleType("huggingface_hub")
 
         def raise_oserror(_repo):
@@ -153,6 +157,8 @@ class TestOpenaiPrivacyFilterEvidence:
         """Unexpected failures should hit the broad-except path and return None."""
         openai_filter._get_openai_ner_pipeline.cache_clear()
 
+        monkeypatch.setattr(openai_filter.platform, "system", lambda: "Darwin")
+
         hf_module = types.ModuleType("huggingface_hub")
 
         def raise_unexpected(_repo):
@@ -175,3 +181,59 @@ class TestOpenaiPrivacyFilterEvidence:
 
         assert pipeline is None
         assert any("Unexpected error in transformer NER pipeline" in msg for msg in caplog.messages)
+
+    def test_get_openai_ner_pipeline_non_macos_uses_transformers_device(self, monkeypatch):
+        """Non-macOS path should call transformers pipeline with resolved device."""
+        openai_filter._get_openai_ner_pipeline.cache_clear()
+
+        monkeypatch.setattr(openai_filter.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(openai_filter, "_resolve_transformers_device", lambda: 0)
+
+        captured = {}
+
+        def fake_pipeline(**kwargs):
+            captured.update(kwargs)
+            return object()
+
+        monkeypatch.setattr(openai_filter, "pipeline", fake_pipeline)
+
+        pipeline_obj = openai_filter._get_openai_ner_pipeline()
+
+        assert pipeline_obj is not None
+        assert captured["task"] == "token-classification"
+        assert captured["model"] == "openai/privacy-filter"
+        assert captured["device"] == 0
+
+    def test_resolve_transformers_device_no_torch_returns_cpu(self, monkeypatch):
+        """When torch is unavailable, resolver should return CPU device index (-1)."""
+        original_import = __import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "torch":
+                raise ModuleNotFoundError("No module named 'torch'")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.__import__", fake_import)
+
+        assert openai_filter._resolve_transformers_device() == -1
+
+    def test_resolve_transformers_device_cuda_available_returns_gpu(self, monkeypatch):
+        """When CUDA is available, resolver should select GPU device index 0."""
+        class FakeCuda:
+            @staticmethod
+            def is_available():
+                return True
+
+        class FakeTorch:
+            cuda = FakeCuda()
+
+        original_import = __import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "torch":
+                return FakeTorch
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.__import__", fake_import)
+
+        assert openai_filter._resolve_transformers_device() == 0

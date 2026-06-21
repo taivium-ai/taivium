@@ -499,34 +499,20 @@ def _verify_onnx_provider(model):
 
 ##### OpenAI Privacy Filter Backend (`transformer_openai_privacy_filter.py`)
 
-> **Removed.** The OpenAI-based LLM evidence layer has been replaced by a local llama.cpp backend. See `src/taivium/llm.py` for the current implementation.
+This backend remains available as a transformer-style privacy detector and now
+selects implementation by platform:
 
-The LLM evidence layer (`src/taivium/llm.py`) now uses a local GGUF model via `llama-cpp-python` instead of the OpenAI API.
+* **macOS (`platform.system() == "Darwin"`)**: Uses `openmed.mlx.inference.PrivacyFilterMLXPipeline`
+* **non-macOS**: Uses Hugging Face `transformers.pipeline("token-classification", model="openai/privacy-filter")`
 
-**Features:**
-* **Local inference**: No API key or network access required — runs entirely on-device
-* **GGUF model format**: Compatible with any instruction-tuned model in GGUF format (e.g. Mistral, LLaMA, Gemma)
-* **GPU acceleration**: Optional via `LLM_N_GPU_LAYERS` environment variable
-* **Error propagation**: Model load and inference errors are logged and re-raised
+This is separate from the Layer 4 LLM evidence path in `src/taivium/llm.py`,
+which uses local llama.cpp and is enabled with `use_llm=True`.
 
-**Configuration:**
-```bash
-export LLM_MODEL_PATH=/path/to/model.gguf    # required
-export LLM_N_GPU_LAYERS=35                   # optional: GPU layers (default 0 = CPU)
-```
+**Failure behavior:**
+* Missing dependencies or model load failures are logged and downgraded to `None`
+* Evidence collection returns an empty list when the backend is unavailable
 
-**Usage:**
-```python
-pipeline = Taivium(use_llm=True)
-# Triggers local llama.cpp backend for Layer 4 LLM evidence
-```
-
-**Install:**
-```bash
-pip install taivium[llm]   # installs llama-cpp-python
-```
-
-**Code location:** [src/taivium/llm.py](../src/taivium/llm.py)
+**Code location:** [src/taivium/backend/transformer_openai_privacy_filter.py](../src/taivium/backend/transformer_openai_privacy_filter.py)
 
 ---
 
