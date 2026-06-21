@@ -88,7 +88,8 @@ def test_collect_evidence_long_text_uses_context_track(monkeypatch: pytest.Monke
         calls["spacy"] += 1
         return []
 
-    def _gliner(_: str, targets=None):
+    def _gliner(_: str, targets=None, threshold=None):
+        _ = (targets, threshold)
         calls["gliner"] += 1
         return [Evidence(0, 4, "PERSON", "gliner", 0.9)]
 
@@ -108,6 +109,36 @@ def test_collect_evidence_long_text_uses_context_track(monkeypatch: pytest.Monke
     assert calls == {"spacy": 0, "gliner": 1, "regex": 1}
 
 
+def test_collect_evidence_structured_payload_filters_short_ner_noise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Structured payloads should filter short header-like PERSON/ORG/LOCATION noise."""
+    import taivium.engine as pp  # pylint: disable=import-outside-toplevel
+
+    text = '{"ID": "1", "STATE": "ENG", "username": "alice99"}'
+    id_start = text.index("ID")
+    eng_start = text.index("ENG")
+    user_start = text.index("alice99")
+
+    def _spacy(_: str, model_name: str = "en_core_web_sm"):
+        _ = model_name
+        return [
+            Evidence(id_start, id_start + 2, "ORG", "spacy", 0.75),
+            Evidence(eng_start, eng_start + 3, "LOCATION", "spacy", 0.75),
+            Evidence(user_start, user_start + 7, "USERNAME", "regex", 0.78),
+        ]
+
+    monkeypatch.setattr(pp, "spacy_evidence", _spacy)
+    monkeypatch.setattr(pp, "regex_evidence", lambda _: [])
+
+    evidence = pp.collect_evidence(text, use_gliner=False)
+    labels = [e.label for e in evidence]
+
+    assert "ORG" not in labels
+    assert "LOCATION" not in labels
+    assert "USERNAME" in labels
+
+
 def test_canonicalize_spans_weighted_vote() -> None:
     """For the same span, canonicalization must choose the highest weighted label."""
     text = "Alice"
@@ -122,6 +153,23 @@ def test_canonicalize_spans_weighted_vote() -> None:
     assert entities[0].source == "canonical"
     assert entities[0].evidence_sources == ("regex",)
     assert entities[0].confidence > 0
+
+
+def test_canonicalize_spans_prefers_full_email_over_ner_fragments() -> None:
+    """Regex EMAIL span should beat overlapping PERSON/ORG NER fragments."""
+    text = "Email: babitha.iliksoy1969@hotmail.com"
+    evidence = [
+        Evidence(7, 38, "EMAIL", "regex", 0.90),
+        Evidence(7, 14, "PERSON", "gliner", 0.65),
+        Evidence(27, 34, "ORG", "gliner", 0.63),
+    ]
+
+    entities = canonicalize_spans(text, evidence)
+
+    assert len(entities) == 1
+    assert entities[0].label == "EMAIL"
+    assert entities[0].start == 7
+    assert entities[0].end == 38
 
 
 def test_canonicalize_spans_explicit_tie_breaker_uses_structural_fields() -> None:

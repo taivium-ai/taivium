@@ -49,8 +49,7 @@ from performance_eval.utility import print_delta_matrix_tables, \
 
 load_dotenv(Path(PROJECT_ROOT) / ".env")
 from performance_eval.eval_datasets import DATASET_LIST, load_cached_dataset, LABEL_PROFILES
-from performance_eval.eval_reference import taivium_detection, \
-    presidio_detection, evaluation
+from performance_eval.eval_reference import taivium_detection, evaluation
 from performance_eval.generate_report_html import generate_html
 
 
@@ -71,9 +70,14 @@ def _save_latest_report_json(
 
     models: dict[str, dict[str, float | None]] = {}
     for result in settings_results:
-        detector = result.get("detection_func").__name__
+        detection_func = result.get("detection_func")
+        detector = detection_func.__name__ if callable(detection_func) else "unknown_detection"
         model = result.get("spacy_model_name", "unknown")
-        label = f"{detector} ({model})"
+        use_gliner = result.get("use_gliner")
+        route_suffix = ""
+        if use_gliner is not None:
+            route_suffix = f", gliner={'on' if use_gliner else 'off'}"
+        label = f"{detector} ({model}{route_suffix})"
         metrics = result.get("metrics", {})
         total_time = result.get("total_time")
         n_samples = result.get("n_samples")
@@ -87,6 +91,7 @@ def _save_latest_report_json(
             "recall": float(metrics.get("recall", 0.0)),
             "f1": float(metrics.get("f1", 0.0)),
             "timing_ms": timing_ms,
+            "use_gliner": use_gliner,
         }
 
     report_payload = {

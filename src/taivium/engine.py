@@ -100,6 +100,62 @@ RECURRENCE_ALLOWED = {
 DEFAULT_SHORT_TEXT_THRESHOLD = 100
 
 
+def _is_likely_structured_payload(text: str) -> bool:
+    """Heuristic detector for JSON/CSV/key-value heavy payloads."""
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return False
+
+    key_value_lines = sum(1 for ln in lines if ":" in ln)
+    csv_like_lines = sum(1 for ln in lines if ln.count(",") >= 3)
+    braces = text.count("{") + text.count("}") + text.count("[") + text.count("]")
+
+    return (
+        (braces >= 2 and key_value_lines >= 1)
+        or (braces >= 4 and key_value_lines >= 2)
+        or key_value_lines >= 5
+        or csv_like_lines >= 3
+    )
+
+
+def _filter_structured_ner_noise(text: str, ner_evidence: List[Evidence]) -> List[Evidence]:
+    """Drop noisy short/header-like NER entities common in structured payloads."""
+    filtered: List[Evidence] = []
+    noisy_tokens = {
+        "id", "sex", "bod", "time", "state", "city", "country", "postcode",
+        "username", "email", "phone", "passport", "idcard", "participant_id",
+    }
+
+    for item in ner_evidence:
+        if item.label not in {"PERSON", "ORG", "LOCATION"}:
+            filtered.append(item)
+            continue
+
+        surface = text[item.start:item.end].strip()
+        if not surface:
+            continue
+
+        low = surface.lower()
+        if low in noisy_tokens:
+            continue
+        if len(surface) <= 2 and surface.isalpha():
+            continue
+        if len(surface) <= 5 and surface.upper() == surface and surface.isalpha():
+            continue
+
+        # In structured payloads, values often appear as key:value pairs where
+        # regex extraction already assigns the canonical label. NER at these
+        # boundaries tends to be noisy (e.g., city value tagged as PERSON).
+        left_window = text[max(0, item.start - 4):item.start]
+        right_window = text[item.end:min(len(text), item.end + 2)]
+        if ":" in left_window and ("\"" in left_window or "'" in left_window or "," in right_window):
+            continue
+
+        filtered.append(item)
+
+    return filtered
+
+
 def _normalize_short_text_threshold(short_text_threshold: int) -> int:
     """Returns a safe short-text routing threshold in characters."""
     if short_text_threshold <= 0:
@@ -112,6 +168,21 @@ def _normalize_short_text_threshold(short_text_threshold: int) -> int:
     return short_text_threshold
 
 
+def _normalize_gliner_threshold(gliner_threshold: Optional[float]) -> Optional[float]:
+    """Returns a safe GLiNER threshold or None to use detector defaults."""
+    if gliner_threshold is None:
+        return None
+    try:
+        value = float(gliner_threshold)
+    except (TypeError, ValueError):
+        logger.warning("Invalid gliner_threshold=%r; ignoring", gliner_threshold)
+        return None
+    if not 0.0 <= value <= 1.0:
+        logger.warning("Out-of-range gliner_threshold=%s; ignoring", value)
+        return None
+    return value
+
+
 def collect_evidence(  # pylint: disable=too-many-arguments
     text: str,
     *,
@@ -119,6 +190,7 @@ def collect_evidence(  # pylint: disable=too-many-arguments
     spacy_model_name: str = "en_core_web_sm",
     short_text_threshold: int = DEFAULT_SHORT_TEXT_THRESHOLD,
     use_gliner: bool = True,
+    gliner_threshold: Optional[float] = None,
     use_transformer: bool = False,
     use_llm: bool = False,
     transformer_fn: Optional[Callable[[str], List[Evidence]]] = None,
@@ -145,6 +217,8 @@ def collect_evidence(  # pylint: disable=too-many-arguments
             Inputs shorter than this value use the fast route (regex + spaCy),
             while longer inputs use the context route (regex + GLiNER).
         use_gliner: Whether to use GLiNER for context-aware NER on longer texts. Enabled by default.
+        gliner_threshold: Optional GLiNER confidence threshold in [0.0, 1.0].
+            When None, GLiNER uses its own default resolution behavior.
         use_transformer: Master switch for the transformer detector layer. Must be
             ``True`` for the layer to run. When ``True`` and no *transformer_fn* is
             provided, uses the built-in BERT NER detector (requires
@@ -164,6 +238,7 @@ def collect_evidence(  # pylint: disable=too-many-arguments
     """
     short_text_threshold = _normalize_short_text_threshold(short_text_threshold)
     evidence = regex_evidence(text)
+    structured_payload = _is_likely_structured_payload(text)
 
     # 0. Fast pre-filtering with known organization list (compliance-friendly)
     if known_orgs:
@@ -177,7 +252,10 @@ def collect_evidence(  # pylint: disable=too-many-arguments
             len(text),
             short_text_threshold,
         )
-        evidence += spacy_evidence(text, model_name=spacy_model_name)
+        ner_evidence = spacy_evidence(text, model_name=spacy_model_name)
+        if structured_payload:
+            ner_evidence = _filter_structured_ner_noise(text, ner_evidence)
+        evidence += ner_evidence
     else:
         logger.debug(
             "Adaptive detector route=context len=%s threshold=%s",
@@ -185,9 +263,17 @@ def collect_evidence(  # pylint: disable=too-many-arguments
             short_text_threshold,
         )
         if use_gliner:
-            evidence += gliner_evidence(text, targets=["PERSON", "LOCATION", "ORGANIZATION"])
+            ner_evidence = gliner_evidence(
+                text,
+                targets=["PERSON", "LOCATION", "ORGANIZATION"],
+                threshold=gliner_threshold,
+            )
         else:
-            evidence += spacy_evidence(text, model_name=spacy_model_name)
+            ner_evidence = spacy_evidence(text, model_name=spacy_model_name)
+
+        if structured_payload:
+            ner_evidence = _filter_structured_ner_noise(text, ner_evidence)
+        evidence += ner_evidence
 
     if use_transformer:
         evidence += (transformer_fn or transformer_evidence)(text)
@@ -217,6 +303,12 @@ def _resolve_short_text_threshold(options: Dict[str, Any]) -> int:
         )
         return DEFAULT_SHORT_TEXT_THRESHOLD
     return _normalize_short_text_threshold(threshold)
+
+
+def _resolve_gliner_threshold(options: Dict[str, Any]) -> Optional[float]:
+    """Resolve optional GLiNER threshold from options with validation."""
+    raw = options.get("gliner_threshold", None)
+    return _normalize_gliner_threshold(cast(Optional[float], raw))
 
 # -----------------------------
 # Adjacent Same-Label Merger
@@ -357,6 +449,8 @@ label_prior: Dict[str, float] = {
         "API_KEY": 0.15,
     }
 
+EMAIL_FRAGMENT_PENALTY = 1.25
+
 def _score_candidate(candidate_evidence: Tuple[Evidence, ...], label: str) -> float:
     """
     Deterministic scoring for one exact span+label hypothesis.
@@ -432,6 +526,19 @@ def canonicalize_spans(  # pylint: disable=too-many-locals,too-many-branches,too
     if not valid:
         return []
 
+    regex_email_spans = {
+        (item.start, item.end)
+        for item in valid
+        if item.label == "EMAIL" and item.source == "regex"
+    }
+
+    def _is_inside_regex_email(start: int, end: int) -> bool:
+        """Returns True when span is a strict subspan of a regex-validated EMAIL."""
+        return any(
+            email_start <= start and end <= email_end and (start, end) != (email_start, email_end)
+            for email_start, email_end in regex_email_spans
+        )
+
     # Step 1: merge only exact-equivalent hypotheses.
     grouped: Dict[Tuple[int, int, str], List[Evidence]] = defaultdict(list)
     for item in valid:
@@ -440,12 +547,17 @@ def canonicalize_spans(  # pylint: disable=too-many-locals,too-many-branches,too
     candidates: List[SpanCandidate] = []
     for (start, end, label), items in grouped.items():
         merged_evidence = tuple(sorted(items, key=lambda ev: (ev.source, ev.confidence)))
+        score = _score_candidate(merged_evidence, label)
+        if label in _SPACY_NER_LABELS and _is_inside_regex_email(start, end):
+            # Prefer full regex-validated email spans over NER fragments
+            # such as PERSON/ORG chunks inside local-part/domain tokens.
+            score -= EMAIL_FRAGMENT_PENALTY
         candidates.append(
             SpanCandidate(
                 start=start,
                 end=end,
                 label=label,
-                score=_score_candidate(merged_evidence, label),
+                score=score,
                 evidence=merged_evidence,
             )
         )
@@ -986,6 +1098,7 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         spacy_model_name: str = "en_core_web_sm",
         model_name: Optional[str] = None,
         short_text_threshold: int = DEFAULT_SHORT_TEXT_THRESHOLD,
+        gliner_threshold: Optional[float] = None,
         id_salt: Optional[str] = None,
         id_hash_len: int = 12,
     ):  # pylint: disable=too-many-arguments
@@ -1010,6 +1123,7 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         self.llm_fn = llm_fn
         self.spacy_model_name = model_name or spacy_model_name
         self.short_text_threshold = _normalize_short_text_threshold(short_text_threshold)
+        self.gliner_threshold = _normalize_gliner_threshold(gliner_threshold)
         self.latency_history: List[float] = []  # Stores recent processing latencies in milliseconds
 
     # pylint: disable=too-many-locals
@@ -1049,6 +1163,7 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
             known_orgs=known_orgs,
             spacy_model_name=self.spacy_model_name,
             use_gliner=self.use_gliner,
+            gliner_threshold=self.gliner_threshold,
             short_text_threshold=self.short_text_threshold,
             use_transformer=self.use_transformer,
             use_llm=self.use_llm,
@@ -1186,17 +1301,20 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
 
 
 # Thread-safe cache for Taivium instances keyed by options
-_engine_cache: Dict[Tuple[bool, bool, str, int, Optional[str], int], Taivium] = {}
+_engine_cache: Dict[Tuple[bool, bool, str, int, Optional[float], Optional[str], int], Taivium] = {}
 _engine_cache_lock = threading.Lock()
 
 
-def _options_key(parsed_options: Dict[str, Any]) -> Tuple[bool, bool, str, int, Optional[str], int]:
+def _options_key(
+    parsed_options: Dict[str, Any],
+) -> Tuple[bool, bool, str, int, Optional[float], Optional[str], int]:
     # Only use options that affect instantiation, and make them hashable
     return (
         bool(parsed_options.get("use_transformer", False)),
         bool(parsed_options.get("use_llm", False)),
         _resolve_spacy_model_name(parsed_options),
         _resolve_short_text_threshold(parsed_options),
+        _resolve_gliner_threshold(parsed_options),
         parsed_options.get("id_salt") or None,
         int(parsed_options.get("id_hash_len", 12)),
         # Do not include non-hashable objects like functions or custom classes

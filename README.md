@@ -83,6 +83,21 @@ entity spans back to original text offsets.
 This keeps short structured inputs on a lightweight path while reserving GLiNER for
 long narrative text where contextual entity resolution matters most.
 
+For highly structured payloads (JSON, CSV, or dense key/value records), Taivium also
+applies a post-NER noise filter that suppresses short header-like PERSON/ORG/LOCATION
+matches (for example `ID`, `BOD`, `STATE`) to reduce false positives while preserving
+regex-based PII extraction.
+
+Canonicalization also protects full regex-validated EMAIL spans from being split by
+overlapping PERSON/ORG NER fragments (for example local-part or domain tokens),
+which improves email recall in mixed structured/narrative payloads.
+
+You can further tune precision/recall on long-context detection by setting
+`TAIVIUM_GLINER_THRESHOLD` (or `gliner_threshold` in engine options). Higher values
+usually improve precision and lower values usually improve recall.
+The current built-in default is `0.47`, selected as a balanced operating point
+from evaluation sweeps.
+
 **Key idea:**  
 Each real-world entity gets a **stable pseudonymous ID** across the session.
 

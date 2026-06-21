@@ -8,6 +8,7 @@ variable-length text inputs. This module handles texts longer than GLiNER's
 import logging
 from typing import Any, cast, Dict, List, Optional, Tuple
 import warnings
+import os
 
 from transformers.utils import logging as hf_logging
 from .utility import get_gliner_model
@@ -26,6 +27,36 @@ logger = logging.getLogger("taivium.engine")
 _GLINER_MAX_TOKENS = 384
 _GLINER_OVERLAP_TOKENS = 32
 _GLINER_BATCH_SIZE = 8
+# Tuned default from evaluation sweeps on privacy dataset subsets.
+# Keeps precision and recall near a balanced operating point.
+DEFAULT_GLINER_THRESHOLD = 0.47
+
+
+def _resolve_gliner_threshold(threshold: Optional[float]) -> float:
+    """Resolve GLiNER confidence threshold from arg/env with validation."""
+    raw: Any = threshold
+    if raw is None:
+        raw = os.getenv("TAIVIUM_GLINER_THRESHOLD", str(DEFAULT_GLINER_THRESHOLD))
+
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid GLiNER threshold=%r; using default %.2f",
+            raw,
+            DEFAULT_GLINER_THRESHOLD,
+        )
+        return DEFAULT_GLINER_THRESHOLD
+
+    if not 0.0 <= value <= 1.0:
+        logger.warning(
+            "Out-of-range GLiNER threshold=%s; using default %.2f",
+            value,
+            DEFAULT_GLINER_THRESHOLD,
+        )
+        return DEFAULT_GLINER_THRESHOLD
+
+    return value
 
 
 def _chunk_text_for_gliner(
@@ -161,16 +192,21 @@ def _predict_gliner_chunks(
     ]
 
 # pylint: disable=too-many-locals
-def gliner_evidence(text: str, targets: Optional[List[str]] = None) -> List[Any]:
+def gliner_evidence(
+    text: str,
+    targets: Optional[List[str]] = None,
+    threshold: Optional[float] = None,
+) -> List[Any]:
     """Collect evidence from GLiNER for PERSON, LOCATION, and ORGANIZATION entities.
 
-    GLiNER is optimized for high-precision detection: uses 0.55 threshold to filter
-    out uncertain predictions, prioritizing correct detections over recall. Inputs
+    GLiNER detection threshold is configurable via function argument or
+    ``TAIVIUM_GLINER_THRESHOLD`` environment variable. Inputs
     longer than 384 tokens are chunked with overlap and processed in batches.
 
     Args:
         text: Input text to analyze.
         targets: List of entity labels to detect (default: ["PERSON", "LOCATION", "ORGANIZATION"]).
+        threshold: Optional confidence threshold in [0.0, 1.0].
 
     Returns:
         List of GLiNER-origin `Evidence` records with high-confidence threshold.
@@ -181,6 +217,7 @@ def gliner_evidence(text: str, targets: Optional[List[str]] = None) -> List[Any]
     target_labels = targets if targets is not None else ["PERSON", "LOCATION", "ORGANIZATION"]
     if not target_labels:
         return evidence
+    gliner_threshold = _resolve_gliner_threshold(threshold)
 
     try:
         model = get_gliner_model()
@@ -194,7 +231,7 @@ def gliner_evidence(text: str, targets: Optional[List[str]] = None) -> List[Any]
             model,
             chunks,
             target_labels,
-            threshold=0.4,
+            threshold=gliner_threshold,
         )
         seen_spans: set[Tuple[int, int, str]] = set()
 

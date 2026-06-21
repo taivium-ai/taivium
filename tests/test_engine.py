@@ -426,3 +426,28 @@ def test_missing_key_uses_default_and_normalizes(monkeypatch):
     result = _resolve_short_text_threshold({})
 
     assert result == DEFAULT_SHORT_TEXT_THRESHOLD + 5
+
+
+def test_resolve_gliner_threshold_valid_number():
+    result = eng._resolve_gliner_threshold({"gliner_threshold": 0.55})
+    assert result == pytest.approx(0.55)
+
+
+def test_resolve_gliner_threshold_invalid_returns_none(caplog):
+    caplog.set_level("WARNING")
+    result = eng._resolve_gliner_threshold({"gliner_threshold": "bad-value"})
+    assert result is None
+    assert "Invalid gliner_threshold" in caplog.text
+
+
+def test_options_key_includes_gliner_threshold():
+    base = {
+        "use_transformer": False,
+        "use_llm": False,
+        "spacy_model_name": "en_core_web_sm",
+        "short_text_threshold": 100,
+        "id_hash_len": 12,
+    }
+    k1 = eng._options_key({**base, "gliner_threshold": 0.4})
+    k2 = eng._options_key({**base, "gliner_threshold": 0.6})
+    assert k1 != k2

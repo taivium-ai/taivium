@@ -219,8 +219,14 @@ def _load_span_style_split(ds_split, allowed_labels):
         comparable_golds.append((text, comparable_gold))
     return comparable_golds
 
-def load_cached_dataset(ds_name: str, allowed_labels) -> Any:
-    """Load dataset from cache or fetch and cache it."""
+def load_cached_dataset(ds_name: str, allowed_labels, split_name: str = "train") -> Any:
+    """Load dataset from cache or fetch and cache it, then build gold spans for one split.
+
+    Args:
+        ds_name: Dataset identifier from DATASET_LIST.
+        allowed_labels: Canonical labels to keep in comparable gold spans.
+        split_name: Split to evaluate (for example: train, validation, test).
+    """
     dataset_file = cache_file_from_payload(__file__, 
                     {"dataset": ds_name, "allowed_labels": allowed_labels})
 
@@ -237,13 +243,19 @@ def load_cached_dataset(ds_name: str, allowed_labels) -> Any:
         else:
             raise ValueError(f"Unsupported dataset source: {ds_name}")
 
-    split_name = "validation" if "validation" in ds else "train"
+    if split_name not in ds:
+        available_splits = ", ".join(sorted(ds.keys()))
+        raise ValueError(
+            f"Dataset '{ds_name}' does not contain split '{split_name}'. "
+            f"Available splits: {available_splits}"
+        )
+
     split = ds[split_name]
     features = split.features
 
     _ner_tag_names = []
     if "ner_tags" in features and "tokens" in features:
-        _ner_tag_names = ds["train"].features["ner_tags"].feature.names
+        _ner_tag_names = split.features["ner_tags"].feature.names
         comparable_golds = _load_conll_style_split(split, _ner_tag_names, allowed_labels)
     elif "privacy_mask" in features or "span_labels" in features:
         comparable_golds = _load_span_style_split(split, allowed_labels)

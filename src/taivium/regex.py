@@ -77,6 +77,9 @@ SOCIALNUMBER_REGEX = re.compile(
     r"|\b[A-Z]{3,6}\d?[\.\-\s]+\d{4,8}[\.\-\s]+[A-Z0-9]{1,3}[\.\-\s]+\d{2,4}\b"
     # CURP continuous (no separators): e.g. 'CADIJ958032CM645', 'FARLE708293FN375'
     r"|\b[A-Z]{4,6}\d{6,8}[A-Z]{2}\d{3,4}\b"
+    # Spaced mixed IDs commonly seen in synthetic privacy datasets:
+    # e.g. "AUSTI 711154 AS 852", "ABCD 123456 XY 99"
+    r"|\b[A-Z]{3,8}[\s\-]\d{4,8}[\s\-][A-Z]{1,4}[\s\-]\d{2,4}\b"
     # 3-3-4 format: phone-style IDs annotated as national IDs (e.g. '684 916 3578', '873-878-0248')
     r"|\b\d{3}[\s\-\.]\d{3}[\s\-\.]\d{4}\b"
     r")",
@@ -174,6 +177,17 @@ _FIELD_KEY_LABEL_MAP = {
     "GEOCOORD": "LOCATION",
     "TITLE": "PERSON",
     "PARTICIPANT": "PERSON",
+    "APPLICANT": "PERSON",
+    "GIVEN_NAME": "PERSON",
+    "SURNAME": "PERSON",
+    "LASTNAME": "PERSON",
+    "MIDDLENAME": "PERSON",
+    "FAMILY_NAME": "PERSON",
+    "FORENAME": "PERSON",
+    "PROVINCE": "LOCATION",
+    "REGION": "LOCATION",
+    "DISTRICT": "LOCATION",
+    "COUNTY": "LOCATION",
 }
 
 # Build regex for all field keys except those already in STRUCTURED_LOCATION_REGEX
@@ -243,7 +257,24 @@ USERNAME_OPAQUE_REGEX = re.compile(
 USERNAME_CONTEXT_REGEX = re.compile(
     (r"(?:[\"']?\b(?:username|user|participant_id|caller|login(?:_id)?|handle)"
      r"\b[\"']?\s*[:=]\s*[\"']?)"
-     r"([a-zA-Z0-9][a-zA-Z0-9._\-]{1,31})"),
+     r"([a-zA-Z0-9][a-zA-Z0-9._\-]{2,31})"),
+    re.IGNORECASE,
+)
+
+# 3b) Keyed short-code usernames (3-6 chars) with letters+digits:
+#     username: N23, participant_id=R21
+USERNAME_SHORT_CODE_CONTEXT_REGEX = re.compile(
+    (r"(?:[\"']?\b(?:username|user|participant_id|caller|login(?:_id)?|handle)"
+     r"\b[\"']?\s*[:=]\s*[\"']?)"
+     r"([A-Za-z0-9]{3,6})"),
+    re.IGNORECASE,
+)
+
+# 4) Natural-language keyed usernames without punctuation separators:
+#    "user paaltwvkjuijwbj957", "handle rand.podo", "participant 43CU"
+USERNAME_NL_CONTEXT_REGEX = re.compile(
+    (r"\b(?:username|user|participant|participant_id|caller|login(?:_id)?|handle)\b"
+     r"\s+([a-zA-Z0-9][a-zA-Z0-9._\-]{1,31})\b"),
     re.IGNORECASE,
 )
 
@@ -325,6 +356,27 @@ def regex_evidence(text: str) -> List[Evidence]:
             if span not in _username_seen_spans:
                 _username_seen_spans.add(span)
                 evidence.append(Evidence(span[0], span[1], "USERNAME", "regex", 0.78))
+
+        for m in USERNAME_SHORT_CODE_CONTEXT_REGEX.finditer(text):
+            candidate = m.group(1)
+            # Require mixed alnum to avoid common short words/tokens.
+            if not (any(ch.isalpha() for ch in candidate) and any(ch.isdigit() for ch in candidate)):
+                continue
+            if skip_username_candidate(candidate) or _is_email_local_part(m.end(1)):
+                continue
+            span = (m.start(1), m.end(1))
+            if span not in _username_seen_spans:
+                _username_seen_spans.add(span)
+                evidence.append(Evidence(span[0], span[1], "USERNAME", "regex", 0.76))
+
+        for m in USERNAME_NL_CONTEXT_REGEX.finditer(text):
+            candidate = m.group(1)
+            if skip_username_candidate(candidate) or _is_email_local_part(m.end(1)):
+                continue
+            span = (m.start(1), m.end(1))
+            if span not in _username_seen_spans:
+                _username_seen_spans.add(span)
+                evidence.append(Evidence(span[0], span[1], "USERNAME", "regex", 0.76))
 
     if _username_full_scan:
         for m in USERNAME_REGEX.finditer(text):

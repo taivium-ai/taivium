@@ -204,6 +204,42 @@ def test_username_context_key_detects_short_code_and_dotted():
     assert "rand.podo" in username_texts
 
 
+def test_username_nl_context_detects_keyed_values_without_colon():
+    text = "The user paaltwvkjuijwbj957 reported an issue; handle rand.podo confirmed it."
+    evidence = eng.regex_evidence(text)
+    username_texts = [text[e.start:e.end] for e in evidence if e.label == "USERNAME"]
+
+    assert "paaltwvkjuijwbj957" in username_texts
+    assert "rand.podo" in username_texts
+
+
+def test_socialnumber_spaced_mixed_id_detected():
+    text = "Record: AUSTI 711154 AS 852 should be treated as a document identifier."
+    evidence = eng.regex_evidence(text)
+    socialnumber_texts = [text[e.start:e.end] for e in evidence if e.label == "SOCIALNUMBER"]
+
+    assert "AUSTI 711154 AS 852" in socialnumber_texts
+
+
+def test_structured_person_applicant_field_detected():
+    text = '"applicant": "Balloi Eckrich", "email": "bballoi@yahoo.com"'
+    evidence = eng.regex_evidence(text)
+    person_texts = [text[e.start:e.end] for e in evidence if e.label == "PERSON"]
+
+    assert "Balloi Eckrich" in person_texts
+
+
+def test_username_short_code_context_detected():
+    text = 'username: N23; participant_id: R21; user: A1'
+    evidence = eng.regex_evidence(text)
+    username_texts = [text[e.start:e.end] for e in evidence if e.label == "USERNAME"]
+
+    assert "N23" in username_texts
+    assert "R21" in username_texts
+    # Two-char code is intentionally ignored to reduce noise.
+    assert "A1" not in username_texts
+
+
 def test_username_regex_does_not_capture_email():
     text = "username: ewgenij.inzollitto22@hotmail.com"
     evidence = eng.regex_evidence(text)

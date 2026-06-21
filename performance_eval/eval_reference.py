@@ -42,12 +42,17 @@ _PRESIDIO_LABEL_MAP = {
 
 def _evaluate_single_sample(task):
     """Worker task for multiprocessing evaluation."""
-    idx, text, comparable_gold, detection_name, allowed_labels, model_name = task
+    idx, text, comparable_gold, detection_name, allowed_labels, model_name, use_gliner = task
     detection_fn = globals().get(detection_name)
     if detection_fn is None:
         raise ValueError(f"Unknown detection function: {detection_name}")
 
-    pred_spans = detection_fn(text, allowed_labels, model_name=model_name)
+    pred_spans = detection_fn(
+        text,
+        allowed_labels,
+        model_name=model_name,
+        use_gliner=use_gliner,
+    )
     fp_set = pred_spans - comparable_gold
     fn_set = comparable_gold - pred_spans
 
@@ -70,11 +75,19 @@ def _evaluate_single_sample(task):
 
 def taivium_detection(text, allowed_labels, model_name="en_core_web_sm", use_gliner=True):
     '''Detect entities in text using Taivium. Returns a set of (start, end, label) spans.'''
-    # Load engine per model only once, reuse on subsequent calls
-    if model_name not in _taivium_engines:
-        print(f"Loading Taivium engine for evaluation with spaCy model: {model_name}")
-        _taivium_engines[model_name] = Taivium(spacy_model_name=model_name, use_gliner=use_gliner)
-    engine = _taivium_engines[model_name]
+    # Load engine per model/config once, reuse on subsequent calls.
+    # use_gliner materially changes detector behavior, so include it in the key.
+    engine_key = (model_name, bool(use_gliner))
+    if engine_key not in _taivium_engines:
+        print(
+            "Loading Taivium engine for evaluation with "
+            f"spaCy model: {model_name}, use_gliner={use_gliner}"
+        )
+        _taivium_engines[engine_key] = Taivium(
+            spacy_model_name=model_name,
+            use_gliner=use_gliner,
+        )
+    engine = _taivium_engines[engine_key]
     result = engine.process(text)
     pred_spans = set()
     for ent in result.get("entities", []):
@@ -162,7 +175,10 @@ def evaluation(detection, dataset, comparable_golds, allowed_labels,
     cache_dir = Path(__file__).parent / ".cache"
     cache_dir.mkdir(exist_ok=True)
     safe_model_name = str(model_name).replace("/", "_")
-    cache_file = cache_dir / f"{run_cache_name}__{detection.__name__}__{safe_model_name}.pkl"
+    variant = ""
+    if detection.__name__ == "taivium_detection":
+        variant = f"__gliner_{'on' if use_gliner else 'off'}"
+    cache_file = cache_dir / f"{run_cache_name}__{detection.__name__}__{safe_model_name}{variant}.pkl"
 
     # Check if cache exists
     if cache_file.exists():
@@ -187,7 +203,7 @@ def evaluation(detection, dataset, comparable_golds, allowed_labels,
     # Multiprocessing gives substantial speedup on large datasets.
     if max_workers > 1 and n_samples > 1:
         tasks = [
-            (idx, text, comparable_gold, detection.__name__, allowed_labels, model_name)
+            (idx, text, comparable_gold, detection.__name__, allowed_labels, model_name, use_gliner)
             for idx, (text, comparable_gold) in enumerate(comparable_golds)
         ]
         overall_bar = None
