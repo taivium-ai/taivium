@@ -11,7 +11,7 @@ Quickstart::
     client = PrivacyClient(api_key="sk-...")
     response = client.chat.completions.create(
         model="gpt-4o",
-        messages=[{"role": "user", "content": "Alice at alice@acme.com needs help."}],
+        messages=[{"role": "user", "content": "A customer at user@acme.com needs help."}],
     )
 
 For custom policies::
@@ -29,17 +29,19 @@ For custom policies::
 from importlib.metadata import version, PackageNotFoundError
 
 from .client import PrivacyClient
-from .engine import (
-    Entity,
+from .defs import (
     Evidence,
+    Entity,
     PolicyAction,
-    PolicyDecision,
     PolicyContext,
+    PolicyDecision,
     PolicyDecisionReason,
-    PolicyEngine,
     PolicyRule,
-    Taivium,
     RiskLevel,
+)
+from .engine import (
+    PolicyEngine,
+    Taivium,
     find_recurrences,
     recurrence_evidence,
     reverse_transform,

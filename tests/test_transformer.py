@@ -1,5 +1,6 @@
 """Tests for the transformer-based NER evidence collector (transformer.py)."""
 import sys
+import types
 import pytest
 
 import taivium.transformer as tr
@@ -28,9 +29,9 @@ def _clear_cache():
 
 class TestGetNerPipeline:
     def test_returns_none_and_warns_when_transformers_missing(self, monkeypatch):
-        """When 'transformers' is not importable, returns None with a RuntimeWarning."""
+        """When required backend deps are missing, returns None with a RuntimeWarning."""
         _clear_cache()
-        monkeypatch.setitem(sys.modules, "transformers", None)
+        monkeypatch.setitem(sys.modules, "huggingface_hub", None)
         with pytest.warns(RuntimeWarning, match="Transformer NER pipeline unavailable"):
             result = tr._get_ner_pipeline()
         assert result is None
@@ -40,12 +41,17 @@ class TestGetNerPipeline:
         """OSError during model loading (e.g. missing weights) also returns None."""
         _clear_cache()
 
-        class _FakeTransformers:
-            @staticmethod
-            def pipeline(*args, **kwargs):
-                raise OSError("model not found")
+        fake_hf = types.SimpleNamespace(
+            snapshot_download=lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("model not found"))
+        )
+        fake_openmed = types.ModuleType("openmed")
+        fake_openmed_mlx = types.ModuleType("openmed.mlx")
+        fake_openmed_inference = types.SimpleNamespace(PrivacyFilterMLXPipeline=lambda _path: object())
 
-        monkeypatch.setitem(sys.modules, "transformers", _FakeTransformers)
+        monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hf)
+        monkeypatch.setitem(sys.modules, "openmed", fake_openmed)
+        monkeypatch.setitem(sys.modules, "openmed.mlx", fake_openmed_mlx)
+        monkeypatch.setitem(sys.modules, "openmed.mlx.inference", fake_openmed_inference)
         with pytest.warns(RuntimeWarning):
             result = tr._get_ner_pipeline()
         assert result is None
@@ -216,3 +222,13 @@ class TestMultipleEntities:
     def test_empty_predictions_returns_empty_list(self, monkeypatch):
         monkeypatch.setattr(tr, "_get_ner_pipeline", lambda: _pipeline([]))
         assert tr.transformer_evidence("No entities here.") == []
+
+
+# --- Exception handling (lines 62-72) ---
+def test_transformer_evidence_broad_exception_handling(monkeypatch):
+    """Broad Exception handling in transformer_evidence catches all errors."""
+    def _error(_text):
+        raise Exception("Unexpected error")  # Not RuntimeError or ValueError
+    monkeypatch.setattr(tr, "_get_ner_pipeline", lambda: _error)
+    result = tr.transformer_evidence("test")
+    assert result == []

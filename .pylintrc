@@ -1,0 +1,5 @@
+[MASTER]
+ignore=src/taivium/transformer.py
+
+[TYPECHECK]
+ignored-modules=transformers,torch

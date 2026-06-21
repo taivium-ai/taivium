@@ -98,3 +98,10 @@ cython_debug/
 .github/prompt
 
 docs_internal
+
+# Performance evaluation cache (but keep history JSON for trend analysis)
+performance_eval/.cache/*.pkl
+performance_eval/.cache/*.pickle
+performance_eval/.cache/*.png
+# Exception: keep performance history for trend tracking
+!performance_eval/.cache/*_performance_history.json

@@ -1,5 +1,7 @@
 """Tests for the evidence-first Taivium flow."""
 
+import logging
+import random
 import unicodedata
 
 import pytest
@@ -40,15 +42,19 @@ def test_transform_no_raise_on_adjacent_spans() -> None:
     assert "PERSON_bbb" in transformed
 
 
-def test_collect_evidence_calls_all_detectors(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The evidence collector must invoke all detector layers."""
-    calls = {"spacy": 0, "regex": 0, "transformer": 0, "llm": 0}
+def test_collect_evidence_short_text_uses_fast_track(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Short text should route through regex + spaCy (fast track)."""
+    calls = {"spacy": 0, "gliner": 0, "regex": 0, "transformer": 0, "llm": 0}
 
     import taivium.engine as pp  # pylint: disable=import-outside-toplevel
 
-    def _spacy(_: str):
+    def _spacy(_: str, model_name: str = "en_core_web_sm"):
         calls["spacy"] += 1
         return [Evidence(0, 5, "PERSON", "spacy", 0.7)]
+
+    def _gliner(_: str, targets=None):
+        calls["gliner"] += 1
+        return [Evidence(0, 5, "PERSON", "gliner", 0.8)]
 
     def _regex(_: str):
         calls["regex"] += 1
@@ -63,6 +69,7 @@ def test_collect_evidence_calls_all_detectors(monkeypatch: pytest.MonkeyPatch) -
         return []
 
     monkeypatch.setattr(pp, "spacy_evidence", _spacy)
+    monkeypatch.setattr(pp, "gliner_evidence", _gliner)
     monkeypatch.setattr(pp, "regex_evidence", _regex)
     monkeypatch.setattr(pp, "transformer_evidence", _transformer)
     monkeypatch.setattr(pp, "llm_evidence", _llm)
@@ -70,7 +77,68 @@ def test_collect_evidence_calls_all_detectors(monkeypatch: pytest.MonkeyPatch) -
     evidence = pp.collect_evidence("Alice Acme", use_transformer=True, use_llm=True)
 
     assert len(evidence) == 2
-    assert calls == {"spacy": 1, "regex": 1, "transformer": 1, "llm": 1}
+    assert calls == {"spacy": 1, "gliner": 0, "regex": 1, "transformer": 1, "llm": 1}
+
+
+def test_collect_evidence_long_text_uses_context_track(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Long text should route through regex + GLiNER (context track)."""
+    calls = {"spacy": 0, "gliner": 0, "regex": 0}
+
+    import taivium.engine as pp  # pylint: disable=import-outside-toplevel
+
+    def _spacy(_: str, model_name: str = "en_core_web_sm"):
+        calls["spacy"] += 1
+        return []
+
+    def _gliner(_: str, targets=None, threshold=None):
+        _ = (targets, threshold)
+        calls["gliner"] += 1
+        return [Evidence(0, 4, "PERSON", "gliner", 0.9)]
+
+    def _regex(_: str):
+        calls["regex"] += 1
+        return []
+
+    monkeypatch.setattr(pp, "spacy_evidence", _spacy)
+    monkeypatch.setattr(pp, "gliner_evidence", _gliner)
+    monkeypatch.setattr(pp, "regex_evidence", _regex)
+
+    long_text = "A" * 120
+    evidence = pp.collect_evidence(long_text)
+
+    assert len(evidence) == 1
+    assert evidence[0].source == "gliner"
+    assert calls == {"spacy": 0, "gliner": 1, "regex": 1}
+
+
+def test_collect_evidence_structured_payload_filters_short_ner_noise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Structured payloads should filter short header-like PERSON/ORG/LOCATION noise."""
+    import taivium.engine as pp  # pylint: disable=import-outside-toplevel
+
+    text = '{"ID": "1", "STATE": "ENG", "username": "alice99"}'
+    id_start = text.index("ID")
+    eng_start = text.index("ENG")
+    user_start = text.index("alice99")
+
+    def _spacy(_: str, model_name: str = "en_core_web_sm"):
+        _ = model_name
+        return [
+            Evidence(id_start, id_start + 2, "ORG", "spacy", 0.75),
+            Evidence(eng_start, eng_start + 3, "LOCATION", "spacy", 0.75),
+            Evidence(user_start, user_start + 7, "USERNAME", "regex", 0.78),
+        ]
+
+    monkeypatch.setattr(pp, "spacy_evidence", _spacy)
+    monkeypatch.setattr(pp, "regex_evidence", lambda _: [])
+
+    evidence = pp.collect_evidence(text, use_gliner=False)
+    labels = [e.label for e in evidence]
+
+    assert "ORG" not in labels
+    assert "LOCATION" not in labels
+    assert "USERNAME" in labels
 
 
 def test_canonicalize_spans_weighted_vote() -> None:
@@ -87,6 +155,23 @@ def test_canonicalize_spans_weighted_vote() -> None:
     assert entities[0].source == "canonical"
     assert entities[0].evidence_sources == ("regex",)
     assert entities[0].confidence > 0
+
+
+def test_canonicalize_spans_prefers_full_email_over_ner_fragments() -> None:
+    """Regex EMAIL span should beat overlapping PERSON/ORG NER fragments."""
+    text = "Email: babitha.iliksoy1969@hotmail.com"
+    evidence = [
+        Evidence(7, 38, "EMAIL", "regex", 0.90),
+        Evidence(7, 14, "PERSON", "gliner", 0.65),
+        Evidence(27, 34, "ORG", "gliner", 0.63),
+    ]
+
+    entities = canonicalize_spans(text, evidence)
+
+    assert len(entities) == 1
+    assert entities[0].label == "EMAIL"
+    assert entities[0].start == 7
+    assert entities[0].end == 38
 
 
 def test_canonicalize_spans_explicit_tie_breaker_uses_structural_fields() -> None:
@@ -231,11 +316,122 @@ def test_identityengine_normalizes_unicode_forms() -> None:
     assert engine.generate_id(nfc, label) == engine.generate_id(nfd, label)
 
 
+@pytest.fixture(name="seeded_identity_variants")
+def fixture_seeded_identity_variants() -> dict[str, list[str]]:
+    """Seeded baseline fixture for deterministic mutation-variant coverage."""
+    rng = random.Random(1337)
+
+    baseline = [
+        "John Smith",
+        "john smith",
+        "John  Smith",
+        "JOHN SMITH",
+        " John Smith ",
+        "John Smith.",
+    ]
+
+    semantic_mutations = [
+        "Mr. John Smith",
+        "John A. Smith",
+        "J. Smith",
+    ]
+
+    rng.shuffle(baseline)
+    rng.shuffle(semantic_mutations)
+
+    return {
+        "baseline": baseline,
+        "semantic_mutations": semantic_mutations,
+    }
+
+
+def test_identityengine_seeded_baseline_variants_are_stable(
+    seeded_identity_variants: dict[str, list[str]],
+) -> None:
+    """Seeded baseline variants should collapse to one deterministic PERSON ID."""
+    engine = IdentityEngine(salt="fixture-seed-1337")
+    baseline = seeded_identity_variants["baseline"]
+
+    # Repeated-run assertion: same input corpus should produce identical IDs every run.
+    run_fingerprints: set[tuple[str, ...]] = set()
+    for _ in range(20):
+        ids = tuple(engine.generate_id(text, "PERSON") for text in baseline)
+        run_fingerprints.add(ids)
+
+    assert len(run_fingerprints) == 1
+    assert len(set(run_fingerprints.pop())) == 1
+
+
+def test_identityengine_semantic_mutations_are_deterministic_per_variant(
+    seeded_identity_variants: dict[str, list[str]],
+) -> None:
+    """Semantic mutations may map differently, but each mutation must be stable across runs."""
+    engine = IdentityEngine(salt="fixture-seed-1337")
+
+    for variant in seeded_identity_variants["semantic_mutations"]:
+        ids = {engine.generate_id(variant, "PERSON") for _ in range(50)}
+        assert len(ids) == 1, f"Variant {variant!r} did not produce a stable ID"
+
+
+def test_pronoun_drift_scenario_has_repeatable_outputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pronoun-heavy input should produce deterministic, repeatable mappings across runs."""
+    import taivium.engine as pp  # pylint: disable=import-outside-toplevel
+
+    text = (
+        "John Smith went to Paris. He met Sarah. "
+        "Later, he emailed her. John Smith thanked her."
+    )
+
+    def _span(fragment: str, occurrence: int = 1) -> tuple[int, int]:
+        start = -1
+        cursor = 0
+        for _ in range(occurrence):
+            start = text.index(fragment, cursor)
+            cursor = start + len(fragment)
+        return start, start + len(fragment)
+
+    def _collect(_: str, **kwargs):
+        del kwargs
+        spans = [
+            (*_span("John Smith", 1), "PERSON"),
+            (*_span("He", 1), "PERSON"),
+            (*_span("Sarah", 1), "PERSON"),
+            (*_span("he", 1), "PERSON"),
+            (*_span("her", 1), "PERSON"),
+            (*_span("John Smith", 2), "PERSON"),
+            (*_span("her", 2), "PERSON"),
+            (*_span("Paris", 1), "LOCATION"),
+        ]
+        return [Evidence(s, e, label, "regex", 0.99) for s, e, label in spans]
+
+    monkeypatch.setattr(pp, "collect_evidence", _collect)
+
+    pipeline = Taivium(id_salt="drift-fixture")
+
+    run_fingerprints: set[tuple[str, tuple[str, ...]]] = set()
+    for _ in range(15):
+        out = pipeline.process(text)
+        run_fingerprints.add((out["anonymized"], tuple(sorted(out["mapping"].keys()))))
+
+        john_ids = [
+            entity["id"]
+            for entity in out["entities"]
+            if entity["label"] == "PERSON" and entity["text"] == "John Smith"
+        ]
+        assert len(john_ids) == 2
+        assert len(set(john_ids)) == 1
+
+    assert len(run_fingerprints) == 1
+
+
 def test_pipeline_process_uses_canonical_entities(monkeypatch: pytest.MonkeyPatch) -> None:
     """End-to-end process should consume canonical entities and emit deterministic mapping."""
     import taivium.engine as pp  # pylint: disable=import-outside-toplevel
 
     def _collect(_: str, **kwargs):
+        del kwargs
         return [
             Evidence(0, 5, "PERSON", "spacy", 0.8),
             Evidence(0, 5, "PERSON", "regex", 0.99),
@@ -304,6 +500,85 @@ def test_reverse_transform_longest_token_first() -> None:
     text = "Hello PERSON_abcdef and PERSON_ab."
     transformed = reverse_transform(text, mapping)
     assert transformed == "Hello Alice and Bob."
+
+
+def test_reverse_transform_double_reverse_is_idempotent() -> None:
+    """Calling reverse_transform twice should be a no-op on the second pass."""
+    mapping = {
+        "PERSON_abc": {"text": "Alice Johnson"},
+        "EMAIL_xyz": {"text": "alice@acme.com"},
+    }
+    text = "Hello PERSON_abc, your email is EMAIL_xyz."
+
+    once = reverse_transform(text, mapping)
+    twice = reverse_transform(once, mapping)
+
+    assert once == "Hello Alice Johnson, your email is alice@acme.com."
+    assert twice == once
+
+
+def test_reverse_transform_invalid_mapping_fails_without_partial_output() -> None:
+    """Invalid mapping should fail before any token replacement occurs."""
+    text = "PERSON_abc met PERSON_bad at EMAIL_xyz."
+    mapping = {
+        "PERSON_abc": {"text": "Alice"},
+        "PERSON_bad": {},
+        "EMAIL_xyz": {"text": "alice@acme.com"},
+    }
+
+    with pytest.raises(ValueError, match="missing 'text'"):
+        reverse_transform(text, mapping)
+
+    # Ensure no in-place mutation happened to input text on failure path.
+    assert text == "PERSON_abc met PERSON_bad at EMAIL_xyz."
+
+
+def test_process_logs_and_audit_stdout_do_not_leak_raw_pii(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Runtime logs and structured audit stdout must not include raw entity values."""
+    import taivium.engine as pp  # pylint: disable=import-outside-toplevel
+
+    text = "Contact Alice Johnson at alice@example.com"
+    email_start = text.index("alice@example.com")
+    email_end = email_start + len("alice@example.com")
+
+    def _collect(_: str, **kwargs):
+        del kwargs
+        return [Evidence(email_start, email_end, "EMAIL", "regex", 0.99)]
+
+    monkeypatch.setattr(pp, "collect_evidence", _collect)
+
+    with caplog.at_level(logging.INFO, logger="taivium.engine"):
+        pipeline = Taivium()
+        output = pipeline.process(text)
+
+    # Ensure processing still worked and redaction happened.
+    assert "alice@example.com" not in output["anonymized"]
+
+    combined_logs = "\n".join(record.getMessage() for record in caplog.records)
+    assert "alice@example.com" not in combined_logs
+    assert "Alice Johnson" not in combined_logs
+
+    audit_stdout = capsys.readouterr().out
+    assert "alice@example.com" not in audit_stdout
+    assert "Alice Johnson" not in audit_stdout
+    assert '"operation": "process"' in audit_stdout
+
+
+def test_reverse_transform_error_message_does_not_echo_input_pii() -> None:
+    """Failure messages must not include raw input PII when reverse_transform fails."""
+    pii_text = "Alice Johnson alice@example.com"
+    bad_mapping = {"PERSON_bad": {"label": "PERSON"}}
+
+    with pytest.raises(ValueError) as exc_info:
+        reverse_transform(pii_text, bad_mapping)
+
+    msg = str(exc_info.value)
+    assert "Alice Johnson" not in msg
+    assert "alice@example.com" not in msg
 
 
 
@@ -389,6 +664,7 @@ def test_pipeline_recurrence_replaces_all_mentions(monkeypatch: pytest.MonkeyPat
     import taivium.engine as pp  # pylint: disable=import-outside-toplevel
 
     def _collect(_: str, **kwargs) -> list:
+        del kwargs
         # spaCy only detects the first full name
         return [Evidence(0, 13, "PERSON", "spacy", 0.75)]
 

@@ -88,7 +88,7 @@ class TestSerializeMetadata:
     """Tests for the _serialize_metadata helper."""
     def test_enum_is_serialized_to_value(self) -> None:
         """Enum values are stored as their .value strings."""
-        from taivium.engine import PolicyAction, RiskLevel  # pylint: disable=import-outside-toplevel
+        from taivium.defs import PolicyAction, RiskLevel  # pylint: disable=import-outside-toplevel
         meta = {"action": PolicyAction.ANONYMIZE, "risk": RiskLevel.HIGH}
         result = _serialize_metadata(meta)
         assert result["action"] == "anonymize"
@@ -141,7 +141,7 @@ class TestRedisSessionStore:
 
     def test_enum_values_round_trip(self, redis_store: RedisSessionStore) -> None:
         """Enum fields are serialized to their .value on write and returned as strings."""
-        from taivium.engine import PolicyAction, RiskLevel  # pylint: disable=import-outside-toplevel
+        from taivium.defs import PolicyAction, RiskLevel  # pylint: disable=import-outside-toplevel
         redis_store.set("EMAIL_abc", {
             "text": "alice@acme.com",
             "action": PolicyAction.ANONYMIZE,
@@ -298,4 +298,27 @@ def test_redis_importerror(monkeypatch):
     s._client = FakeClient()
     s._prefix = "test:"
     s._ttl = 123
+
+
+def test_redis_session_store_set_many_empty_mapping():
+    """set_many with empty mapping returns early without pipeline call."""
+    class FakeClient:
+        def pipeline(self):
+            class Pipe:
+                def __init__(self):
+                    self.calls = []
+                def set(self, k, v, ex=None):
+                    self.calls.append((k, v, ex))
+                def execute(self):
+                    return self.calls
+            return Pipe()
+    
+    s = store_mod.RedisSessionStore.__new__(store_mod.RedisSessionStore)
+    s._client = FakeClient()
+    s._prefix = "test:"
+    s._ttl = 123
+    
+    # Call with empty mapping (line 189)
+    s.set_many({})
+    # Should return early without error
     s.set_many({"id": {"meta": 1}})  # Should not raise

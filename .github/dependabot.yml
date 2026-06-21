@@ -1,0 +1,36 @@
+version: 2
+updates:
+  # Enable version updates for Python dependencies
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "03:00"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "security"
+    # Group security updates separately for faster merging
+    groups:
+      security:
+        dependency-type: "security"
+        update-types:
+          - "version-update:semver-patch"
+          - "version-update:semver-minor"
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+      include: "scope"
+    pull-request-branch-name:
+      separator: "/"
+
+  # Enable version updates for GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "03:00"
+    labels:
+      - "ci/cd"

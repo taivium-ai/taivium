@@ -189,7 +189,7 @@ Module-level utility in `engine.py` that replaces every entity ID token in `text
 
 **Methods:**
 - Regex
-- spaCy NER
+- Adaptive NER routing (spaCy for short structured payloads, GLiNER for longer contextual payloads)
 - Transformer-based NER
 - Optional LLM tagging
 
@@ -201,10 +201,15 @@ The detector stage emits evidence from all enabled detector layers, then resolve
 Input Text
     |
     v
-[Layer 1] spaCy evidence
+[Layer 0] org_list evidence (opt-in: known_orgs=[...])
     |
     v
-[Layer 2] regex evidence
+[Layer 1] regex evidence (always on)
+    |
+    v
+[Layer 2] adaptive NER route
+    - len(text) < 100  -> spaCy
+    - len(text) >= 100 -> GLiNER
     |
     v
 [Layer 3] transformer evidence (opt-in: use_transformer=True)
@@ -222,7 +227,123 @@ canonicalize_spans() -> canonical entity set
 find_recurrences() -> recurrence entities (optional, non-overlapping)
 ```
 
+**Layer 0: Organization List (Compliance-Friendly Detection)**
+
+The organization list layer provides fast, deterministic, fully-auditable detection of known organizations before expensive ML layers. Implemented via `org_list_evidence(text, known_orgs)`, this layer uses exact-match lookup with case-insensitive matching and proper regex character escaping.
+
+**Tier System for Organization Detection:**
+
+- **Tier 1 (Curated org_list)**: Known organizations, exact-match substring detection, confidence=0.95, <1ms per text, fully auditable
+- **Tier 2 (GLiNER fallback)**: Unknown organizations, ML-based detection, confidence=0.55, 5-10ms per text
+- **Tier 3 (Optional manual review)**: Borderline cases (0.50-0.55 confidence) routed for human review
+
+**Why tier organization detection?**
+
+Organizations require explicit curation for compliance defensibility. A curated list of known organizations satisfies GDPR Article 32 (Privacy by Design) by providing deterministic, reproducible, and auditable detection that does not rely on probabilistic machine learning. GLiNER serves as a Tier 2 fallback to catch organizations not on the curated list, maximizing recall while maintaining compliance.
+
+**Confidence and Scoring:**
+
+- org_list evidence: confidence=0.95 (exact match, high precision)
+- GLiNER evidence: confidence varies by model output (typical: 0.55)
+- In canonicalization, org_list overlaps are resolved with higher weight via `SOURCE_WEIGHT["org_list"] = 1.0`
+
+**Usage:**
+
+```python
+from taivium import Taivium
+
+pipeline = Taivium()
+text = "Acme Corporation approved the request."
+known_orgs = ["Acme Corporation", "Beta Industries", "Gamma LLC"]
+
+result = pipeline.process(text, known_orgs=known_orgs)
+# Acme Corporation is detected with source="org_list", confidence=0.95
+# Falls back to GLiNER for unknown organizations
+```
+
+**Implementation:**
+
+`org_list_evidence()` is invoked conditionally in `collect_evidence()`:
+```python
+if known_orgs:
+    evidence += org_list_evidence(text, known_orgs)
+```
+
+The function returns a list of `Evidence` objects with `source="org_list"` and `label="ORG"`. Each organization is detected by exact substring matching with case-insensitive lookup and Unicode-safe character handling.
+
+---
+
+**Layer 1a: Structured Field Detection (Context-Keyed Entity Values)**
+
+The regex layer includes generalized field detection that extracts sensitive values from structured formats (JSON, YAML, Markdown, XML) based on field key names. This increases recall for values that might otherwise be missed by generic NER patterns.
+
+**Principle:** Only the **VALUE** is labeled with the entity type, not the key. This prevents false positives on field keys themselves (e.g., `"email"` field key is not labeled as EMAIL, only the email value is).
+
+**Supported Formats:**
+
+- JSON/YAML: `"email": "john@example.com"` or `'email': 'john@example.com'`
+- Markdown: `- Email: john@example.com` or `**Email:** john@example.com`
+- XML: `<email>john@example.com</email>`
+
+**Field Key Mapping:**
+
+Maps 50+ field key names to canonical entity labels:
+
+| Label | Mapped Keys | Confidence |
+|-------|------------|------------|
+| `EMAIL` | email, mail, inbox, sender, recipient, from, to, cc, bcc, address | 0.90 |
+| `PHONE` | phone, mobile, cell, telephone, contact, number | 0.80 |
+| `DATE` | date, created, updated, birth_date, dob, issued, expires | 0.75 |
+| `USERNAME` | username, user, participant_id, caller, login, handle | 0.72 |
+| `ORG` | company, organization, employer, organization_name, org | 0.72 |
+| `API_KEY` | api_key, apikey, secret, token, access_key | 0.93 |
+| `IP` | ip, ip_address, host, server, endpoint | 0.88 |
+| `SOCIALNUMBER` | ssn, social_security, sin, nric, id_number, tax_id | 0.85 |
+| `PERSON` | name, first_name, last_name, creator, author, contact_person | 0.72 |
+
+**Validation and Safety:**
+
+- **Deduplication**: Skips spans that have already been detected by higher-confidence detectors or field detection
+- **EMAIL validation for USERNAME**: If a field is labeled as `username` but the value is a valid email, the field is skipped to prevent misclassification
+- **Underscore check**: USERNAME values starting with underscore are filtered to avoid false positives
+- **Boundary checking**: Properly handles whitespace trimming and capture group offset calculation to ensure span accuracy
+
+**Implementation:**
+
+The structured field detector runs as part of `regex_evidence()` after pattern-based detection and scans the text for field key + value combinations using multi-format regex patterns. For each matched field:
+
+1. Extract the value from the appropriate capture group (1 for JSON/YAML, 2 for Markdown, 3 for XML)
+2. Identify the field key and map it to a canonical label via `_FIELD_KEY_LABEL_MAP`
+3. Validate the value is not already detected or is not a false positive
+4. Apply label-specific confidence and emit evidence with `source="regex"`
+
+**Example:**
+
+```python
+text = """
+{
+  "email": "alice@example.com",
+  "phone": "+1-555-1234",
+  "username": "alice_smith",
+  "organization": "Acme Corp"
+}
+"""
+
+# Field detection finds and labels:
+# - "alice@example.com" → EMAIL (confidence 0.90)
+# - "+1-555-1234" → PHONE (confidence 0.80)
+# - "alice_smith" → USERNAME (confidence 0.72)
+# - "Acme Corp" → ORG (confidence 0.72)
+```
+
+**Privacy Note:** Field detection is fully deterministic and rule-based. No ML models or probabilistic classifiers are involved, making it suitable for compliance-sensitive deployments.
+
+---
+
 * Each layer runs independently; failures in one layer do not block others
+* org_list is checked first (Layer 0) as an opt-in compliance feature
+* Structured field detection runs as part of Layer 1 (regex), extracting values from JSON/YAML/Markdown/XML formats
+* Adaptive threshold defaults to 100 characters (`short_text_threshold`)
 * Evidence is merged first, then canonicalized
 * Canonicalization uses a sweep-line overlap-cluster algorithm: overlapping evidence spans are grouped into connected clusters, then each cluster is resolved to one canonical entity via weighted label voting
 * After canonicalization, the semantic recurrence layer finds repeated surface-form mentions only for recurrence-eligible canonical entities (default: `EMAIL`, `PHONE`, `API_KEY`; gated heuristics for `PERSON` and `ORG`) and adds them as new, non-overlapping entities with source="recurrence", inheriting canonical `evidence_sources` and `confidence`. Matching uses exact substring scanning plus manual boundary validation (Unicode-aware character classes), not regex `\\b` heuristics.
@@ -230,7 +351,172 @@ find_recurrences() -> recurrence entities (optional, non-overlapping)
 
 ---
 
-#### 3.2.1.1 Canonical Span Resolution
+#### 3.2.1.1 Backend Architecture and Modularization
+
+The detection layer uses pluggable backend modules that encapsulate different NER strategies. This modular design enables:
+
+* **Strategy isolation**: Each backend implementation is self-contained and can be tested independently
+* **Lazy loading**: Backends are loaded on-demand to minimize startup overhead
+* **Provider flexibility**: Easy switching between different detection engines
+* **Dependency isolation**: Backend-specific dependencies (GLiNER, OpenAI SDK) are imported only when needed
+
+##### Backend Directory Structure
+
+```
+src/taivium/backend/
+├── __init__.py
+├── transformer_gliner.py      # GLiNER-specific long-form NER with DeBERTa chunking
+└── transformer_openai_privacy_filter.py  # OpenAI API-based detection (optional)
+```
+
+##### Backend Loading and Routing
+
+The `_resolve_context_ner_backend()` function in `engine.py` implements adaptive routing:
+
+```python
+def _resolve_context_ner_backend(text, use_gliner=True):
+    """
+    Select appropriate NER backend based on text length and configuration.
+    
+    - len(text) < 100 chars  → spaCy (via Layer 2 regex/spacy evidence)
+    - len(text) >= 100 chars → GLiNER (from backend.transformer_gliner)
+    """
+    if not use_gliner:
+        return None  # Use spaCy fallback
+    
+    if len(text) < 100:
+        return None  # Short text: handled by spaCy in Layer 2
+    
+    # Long text: load GLiNER backend
+    from .backend.transformer_gliner import get_gliner_model
+    model = get_gliner_model()
+    return model
+```
+
+**Key routing parameters:**
+- `short_text_threshold = 100` (chars): threshold for switching between spaCy and GLiNER
+- `use_gliner = True` (default): enable/disable GLiNER long-form detection
+- `use_transformer = False` (opt-in): enable transformer-based detection (Layer 3)
+- `use_llm = False` (opt-in): enable LLM-based detection (Layer 4)
+
+##### GLiNER Backend (`transformer_gliner.py`)
+
+**Purpose:** High-accuracy entity extraction for longer texts (100+ characters) using context-aware neural NER.
+
+**Key Features:**
+* **DeBERTa tokenization**: Uses the exact tokenizer from GLiNER's inference engine (DeBERTa) for chunking to ensure token count accuracy and avoid truncation
+* **ONNX acceleration**: Supports provider selection in priority order: CoreML (M-series Macs) → CUDA (NVIDIA GPUs) → CPU
+* **Chunked inference**: Splits long texts into 384-token chunks with overlap for boundary preservation
+* **Entity recovery**: Remaps chunk-level offsets back to original text coordinates
+
+**Chunking Algorithm:**
+
+1. Extract GLiNER's native DeBERTa tokenizer from model
+2. Tokenize text with offset mapping (`return_offsets_mapping=True`)
+3. Reserve 2 tokens for [CLS]/[SEP], use max 382 content tokens
+4. Split at token boundaries to avoid mid-token splits
+5. Apply configurable overlap (default: 64 tokens) to preserve boundary entities
+6. Remap chunk-local offsets back to document-global offsets
+
+**Example:**
+```python
+from taivium.backend.transformer_gliner import get_gliner_model, chunk_text_for_gliner
+
+model = get_gliner_model()  # Lazy-loaded on first call
+chunks = chunk_text_for_gliner(long_text, model=model, chunk_size=384, overlap=64)
+
+# Process each chunk
+for chunk in chunks:
+    entities = model.predict_entities(
+        chunk["text"],
+        labels=["PERSON", "ORG", "EMAIL", "PHONE"]
+    )
+    # Remap offsets to original text
+    for entity in entities:
+        entity["start"] += chunk["start_offset"]
+        entity["end"] += chunk["start_offset"]
+```
+
+**Performance Characteristics:**
+- Model load: ~400ms (one-time, on first call)
+- Inference per call: ~10-20ms (CPU), ~5-10ms (GPU)
+- Tokenization overhead: ~2-3% of total (DeBERTa ~2.5x faster than spaCy blank)
+- Memory footprint: ~1.2GB (model) + overhead
+
+**ONNX Provider Selection:**
+```python
+def _verify_onnx_provider(model):
+    """
+    Select best available ONNX execution provider in priority order.
+    
+    1. CoreMLExecutionProvider (Apple Silicon M1/M2/M3)
+    2. CUDAExecutionProvider (NVIDIA GPU)
+    3. CPUExecutionProvider (fallback)
+    """
+    available = rt.get_available_providers()
+    providers = [
+        ("CoreMLExecutionProvider", "Apple Neural Engine"),
+        ("CUDAExecutionProvider", "NVIDIA GPU"),
+        ("CPUExecutionProvider", "CPU"),
+    ]
+    
+    for provider_name, label in providers:
+        if provider_name in available:
+            return provider_name
+    
+    return "CPUExecutionProvider"  # Safe fallback
+```
+
+**Code location:** [src/taivium/backend/transformer_gliner.py](../src/taivium/backend/transformer_gliner.py)
+
+**Test coverage:** 47 tests in [tests/test_transformer_gliner.py](../../tests/test_transformer_gliner.py)
+
+##### Utility Functions (`src/taivium/utility.py`)
+
+Generic ONNX provider verification and model loading utilities are centralized in `utility.py` to avoid circular imports:
+
+```python
+from functools import lru_cache
+
+@lru_cache(maxsize=1)
+def get_gliner_model():
+    """
+    Lazy-load GLiNER model, deferring import until first call.
+    Cached to avoid reloading on subsequent calls.
+    """
+    from .backend.transformer_gliner import get_gliner_model as _backend_get_gliner_model
+    return _backend_get_gliner_model()
+
+def _verify_onnx_provider(model):
+    """Generic ONNX provider verification (imported by backends)."""
+    # ... implementation ...
+```
+
+**Rationale for centralization:**
+- `backend.transformer_gliner` imports `_verify_onnx_provider` from utility
+- Utility wraps GLiNER loader in lazy wrapper to defer import and avoid circular dependency
+- Single source of truth for ONNX provider logic
+
+##### OpenAI Privacy Filter Backend (`transformer_openai_privacy_filter.py`)
+
+This backend remains available as a transformer-style privacy detector and now
+selects implementation by platform:
+
+* **macOS (`platform.system() == "Darwin"`)**: Uses `openmed.mlx.inference.PrivacyFilterMLXPipeline`
+* **non-macOS**: Uses Hugging Face `transformers.pipeline("token-classification", model="openai/privacy-filter")`
+
+This is separate from the Layer 4 LLM evidence path in `src/taivium/llm.py`,
+which uses local llama.cpp and is enabled with `use_llm=True`.
+
+**Failure behavior:**
+* Missing dependencies or model load failures are logged and downgraded to `None`
+* Evidence collection returns an empty list when the backend is unavailable
+
+**Code location:** [src/taivium/backend/transformer_openai_privacy_filter.py](../src/taivium/backend/transformer_openai_privacy_filter.py)
+
+---
+
+#### 3.2.1.2 Canonical Span Resolution
 
 Evidence from multiple detectors can conflict. `canonicalize_spans(text, evidence)` resolves this into a single canonical entity set using a **weighted interval scheduling (DP) algorithm**:
 
@@ -240,7 +526,23 @@ Evidence from multiple detectors can conflict. `canonicalize_spans(text, evidenc
 4. **Schedule** — solve weighted interval scheduling via DP to select the globally optimal, strictly non-overlapping candidate set. Tie-breaking is deterministic using `(score, coverage, -count, -start, -end, label)` keys so equal-score ties never depend on iteration order.
 5. **Emit** — produce one `Entity(source="canonical")` per selected candidate with retained `evidence_sources` (sorted union of contributing detector sources) and averaged `confidence`; the selected set is non-overlapping by construction.
 
+**SOURCE_WEIGHT Configuration**
 
+Each detection source is assigned a reliability weight used during canonicalization to prioritize high-confidence sources when evidence conflicts:
+
+| Source | Weight | Rationale |
+|--------|--------|-----------|
+| `org_list` | 1.0 | Curated organization list: very high precision for known orgs, fully auditable |
+| `regex` | 0.9 | Rule-based: high precision, deterministic, no ML variance |
+| `spacy` | 0.8 | Statistical NER: good precision, moderate recall |
+| `gliner` | 0.8 | Neural NER: good precision, higher recall than spaCy |
+| `transformer` | 0.7 | Transformer-based: experimental, lower priority by default |
+| `llm` | 0.6 | LLM-based: variable precision, lower priority |
+| `recurrence` | 0.5 | Repeated entity: inherits from canonical source |
+
+Higher weights indicate more reliable sources. When multiple detectors identify overlapping entity candidates, canonicalization uses weighted scoring to select the best candidate. `org_list` has the highest weight, ensuring curated organizations are always prioritized over ML-detected alternatives.
+
+---
 #### 3.2.1.2 Canonicalization and Span Integrity Contract
 
 The canonicalization and transformation pipeline must satisfy the following hard invariants:
@@ -583,9 +885,87 @@ spaCy's `en_core_web_sm` model frequently fails to tag single-token names (e.g. 
 
 If no salt is provided, entity IDs are globally stable and can be linked across documents, tenants, or sessions. This may be a privacy risk in regulated or multi-tenant environments. **Always set a unique salt per tenant or session for privacy-preserving deployments.**
 
+### Backend Availability and Graceful Degradation
+
+Taivium backends are optional and gracefully degrade when unavailable:
+
+- **GLiNER backend** (`backend/transformer_gliner.py`): Loaded on-demand for texts ≥100 characters. If unavailable, falls back to spaCy. If both are unavailable, regex-only detection is used.
+- **LLM evidence layer** (`src/taivium/llm.py`): Opt-in via `use_llm=True`. Requires `LLM_MODEL_PATH` set to a local GGUF model file. If the path is unset, the layer is silently skipped. If the model fails to load or inference fails, the error is logged and re-raised.
+- **spaCy model**: Lazy-loaded on first `process()` call. If unavailable, regex-only detection is used.
+
+All failures are non-blocking and logged. Core functionality (regex + policy) always works.
+
 ### Transformer and LLM Detection Layers
 
-Both layers are fully implemented and opt-in. `transformer_evidence()` uses `dslim/bert-base-NER` via HuggingFace `transformers`; `llm_evidence()` uses `gpt-4o-mini` via the OpenAI API. Enable them with `use_transformer=True` and `use_llm=True` on `Taivium`. All layers run additively — each adds to the evidence pool; `canonicalize_spans()` resolves conflicts.
+Both layers are fully implemented and opt-in:
+
+- **Transformer evidence** (Layer 3): Uses `dslim/bert-base-NER` via HuggingFace `transformers`. Enable with `use_transformer=True`.
+
+- **LLM evidence** (Layer 4): Uses a local GGUF model via **llama.cpp** (`llama-cpp-python`), implemented in `src/taivium/llm.py`. Enable with `use_llm=True`. Requires `LLM_MODEL_PATH` environment variable pointing to a GGUF model file. Optionally set `LLM_N_GPU_LAYERS` to offload layers to GPU (default: CPU only). Errors during inference are logged and re-raised.
+
+All layers run additively — each adds to the evidence pool; `canonicalize_spans()` resolves conflicts.
+
+#### 3.2.5.1 GLiNER Tokenization Optimization
+
+**Problem (Resolved):** Long-form text detection was producing warnings like "Sentence of length 429 has been truncated to 384" during GLiNER inference. This was caused by a **tokenizer mismatch**:
+
+- **spaCy blank tokenizer** (used naively) produces ~92 tokens for test text
+- **GLiNER's DeBERTa tokenizer** (actual inference engine) produces ~115 tokens for the same text
+- Result: 384 spaCy tokens → 389-391 DeBERTa tokens, exceeding GLiNER's hard 384-token limit
+- Impact: Entities at chunk boundaries were being truncated during inference, causing entity loss (e.g., "Bob Smith", location entities disappeared)
+
+**Solution:** Switch from spaCy blank tokenizer to GLiNER's native DeBERTa tokenizer for chunking, using offset mapping for exact character boundary reconstruction.
+
+**Implementation Details:**
+
+1. **Extract tokenizer from model** → `gliner_tokenizer = model.data_processor.transformer_tokenizer`
+2. **Tokenize with offset mapping** → `tokenizer(text, return_offsets_mapping=True, add_special_tokens=False)`
+3. **Reserve special tokens** → `max_content_tokens = 384 - 2` (for [CLS]/[SEP])
+4. **Chunk by token boundaries** → Use offset mapping to split text at exact token boundaries
+5. **Fallback support** → When tokenizer unavailable (mocked tests), gracefully fall back to spaCy blank
+
+**Performance Gains:**
+
+| Tokenizer | Time per Call | Accuracy |
+|-----------|---------------|----------|
+| spaCy blank | 6.15ms | ❌ Inaccurate (mismatch) |
+| **DeBERTa** | **2.46ms** | ✅ Perfect (matches GLiNER) |
+| **Improvement** | **2.5x faster** | **Eliminates truncation** |
+
+DeBERTa is faster due to HuggingFace's optimized C-based implementation, despite producing more tokens (1,753 vs 1,736) due to subword tokenization.
+
+**Chunk Verification (1,426-word test text):**
+
+*Before (spaCy):*
+```
+Chunk 0: 391 tokens ❌ EXCEEDS 384 (truncated)
+Chunk 1: 390 tokens ❌ EXCEEDS 384 (truncated)
+Chunk 2: 389 tokens ❌ EXCEEDS 384 (truncated)
+Chunk 3: 390 tokens ❌ EXCEEDS 384 (truncated)
+Chunk 4: 332 tokens ✓ OK
+```
+
+*After (DeBERTa):*
+```
+Chunk 0: 384 tokens ✓ OK
+Chunk 1: 384 tokens ✓ OK
+Chunk 2: 384 tokens ✓ OK
+Chunk 3: 384 tokens ✓ OK
+Chunk 4: 355 tokens ✓ OK
+```
+
+**Code Location:** [src/taivium/backend/transformer_gliner.py](../src/taivium/backend/transformer_gliner.py) → `_chunk_text_for_gliner()` function
+
+**Test Coverage:** [tests/test_transformer_gliner.py](../../tests/test_transformer_gliner.py) (47 tests) → `test_chunk_text_for_gliner_exact_token_boundaries` validates token limits
+
+**Full Pipeline Performance:**
+- With DeBERTa chunking: 647ms (accurate, no truncation)
+- Tokenization is only ~2-3% of total pipeline time
+- GLiNER inference: ~70% of total
+
+**Key Insight:** Using the exact tokenizer that the inference engine uses ensures chunk accuracy, while HuggingFace's optimized implementation provides a 2.5x speedup over spaCy's Python-based tokenizer. This is a rare optimization where correctness and performance both improve.
+
+For detailed technical analysis, see [docs/GLINER_TOKENIZATION_OPTIMIZATION.md](GLINER_TOKENIZATION_OPTIMIZATION.md).
 
 ### Regex Confidence Calibration
 
@@ -595,6 +975,8 @@ Regex detectors now use calibrated confidence values (email: 0.90, phone: 0.80, 
 
 
 The spaCy model is lazy-loaded on the first call to `PrivacyPipeline.process()`. The first call incurs a one-time startup cost (typically ~300–400 ms) while the model is loaded into memory. All subsequent calls run in ~10–20 ms. The model is loaded with unused pipeline components disabled (`tagger`, `parser`, `lemmatizer`, `attribute_ruler`) to minimise inference latency.
+
+By default, Taivium uses `en_core_web_sm`, and the model can be configured with `Taivium(spacy_model_name="<model>")` or `module_engine_process(..., options={"spacy_model_name": "<model>"})`.
 
 **Testing Environment:**
 - Macbook Pro M2 (Apple Silicon)

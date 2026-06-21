@@ -10,6 +10,7 @@ Section 3 tests substitute ``InMemorySessionStore`` for ``RedisSessionStore``
 so the suite runs without a live Redis instance.
 """
 from unittest import mock
+import sys
 
 import pytest
 
@@ -26,9 +27,9 @@ from taivium.engine import (
     PolicyAction,
     PolicyEngine,
     PolicyRule,
-    Taivium,
-    RiskLevel,
+    Taivium
 )
+from taivium.defs import RiskLevel
 from taivium.session_store import InMemorySessionStore
 
 
@@ -278,28 +279,17 @@ class TestSection4TransformerAndLlm:
 
     @staticmethod
     def _mock_llm(monkeypatch, entities: list):
-        """Patch openai.OpenAI to return a mock client emitting *entities*."""
+        """Inject a mock llama_cpp module that returns *entities* as JSON."""
         import json  # pylint: disable=import-outside-toplevel
 
-        class _Choice:
-            class _Message:
-                content = json.dumps(entities)
-            message = _Message()
+        payload = json.dumps(entities)
 
-        class _Completion:
-            choices = [_Choice()]
+        mock_llama_instance = mock.MagicMock()
+        mock_llama_instance.return_value = {"choices": [{"text": payload}]}
 
-        class _Chat:
-            class _Completions:
-                @staticmethod
-                def create(**_kw):
-                    return _Completion()
-            completions = _Completions()
-
-        class _Client:
-            chat = _Chat()
-
-        monkeypatch.setattr("openai.OpenAI", lambda **kw: _Client())
+        mock_module = mock.MagicMock()
+        mock_module.Llama = mock.MagicMock(return_value=mock_llama_instance)
+        monkeypatch.setitem(sys.modules, "llama_cpp", mock_module)
 
     # ------------------------------------------------------------------
     # Return-shape tests (no extra layers)
@@ -332,10 +322,12 @@ class TestSection4TransformerAndLlm:
 
     def test_transformer_evidence_adds_source(self, monkeypatch):
         """With use_transformer=True the transformer source appears in evidence_sources."""
+        text = "Dr. Emily Clarke joined Horizon AI in Boston."
         self._mock_transformer(monkeypatch, [
             {"entity_group": "PER", "score": 0.99, "start": 4, "end": 16, "word": "Emily Clarke"},
         ])
         result = run_section4_transformer_and_llm(
+            text=text,
             use_transformer=True, use_llm=False, verbose=False
         )
         person_entities = [
@@ -345,10 +337,12 @@ class TestSection4TransformerAndLlm:
 
     def test_transformer_blends_confidence(self, monkeypatch):
         """Confidence is the mean of spaCy (0.75) and transformer scores."""
+        text = "Dr. Emily Clarke joined Horizon AI in Boston."
         self._mock_transformer(monkeypatch, [
             {"entity_group": "PER", "score": 1.0, "start": 4, "end": 16, "word": "Emily Clarke"},
         ])
         result = run_section4_transformer_and_llm(
+            text=text,
             use_transformer=True, use_llm=False, verbose=False
         )
         person = next(
@@ -377,19 +371,23 @@ class TestSection4TransformerAndLlm:
 
     def test_llm_evidence_adds_source(self, monkeypatch):
         """With use_llm=True the llm source appears in evidence_sources."""
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        text = "Dr. Emily Clarke joined Horizon AI in Boston."
+        monkeypatch.setenv("LLM_MODEL_PATH", "/path/to/model.gguf")
         self._mock_llm(monkeypatch, [
             {"text": "Emily Clarke", "type": "PERSON"},
         ])
         result = run_section4_transformer_and_llm(
+            text=text,
             use_transformer=False, use_llm=True, verbose=False
         )
         person_entities = [e for e in result["entities"] if e["label"] == "PERSON"]
         assert any("llm" in e["evidence_sources"] for e in person_entities)
 
     def test_llm_skipped_without_api_key(self, monkeypatch):
-        """LLM layer is silently skipped when OPENAI_API_KEY is unset."""
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        """LLM layer is silently skipped when LLM_MODEL_PATH is unset."""
+        monkeypatch.delenv("LLM_MODEL_PATH", raising=False)
+        import taivium.llm as llm_mod  # pylint: disable=import-outside-toplevel
+        llm_mod._WarnState.reset_warning()
         result = run_section4_transformer_and_llm(
             use_transformer=False, use_llm=True, verbose=False
         )

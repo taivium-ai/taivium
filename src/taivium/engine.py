@@ -18,156 +18,54 @@ import threading
 import time
 import unicodedata
 from collections import defaultdict
-from dataclasses import dataclass
-from enum import Enum
-from functools import lru_cache
 from typing import Any, Callable, cast, Dict, List, Optional, Tuple
-
 import os
 
-import spacy
 from .transformer import transformer_evidence
+from .backend.transformer_gliner import gliner_evidence
+from .backend.transformer_openai_privacy_filter import openai_privacy_filter_evidence
 from .session_store import InMemorySessionStore, SessionStore, RedisSessionStore
 from .llm import llm_evidence
 from .audit_logger import log_audit_event
-
+from .utility import get_spacy_model
+from .defs import (Evidence, normalize_label, Entity,
+                   PolicyAction, SpanCandidate, PolicyDecision,
+                   PolicyContext, PolicyDecisionReason, PolicyRule,
+                   DEFAULT_POLICY,DEFAULT_UNDEFINED_POLICY_RISK)
+from .regex import regex_evidence, _is_placeholder, org_list_evidence
 logger = logging.getLogger("taivium.engine")
-
-# -----------------------------
-# Policy Action and Risk Level Enums
-# -----------------------------
-
-
-class PolicyAction(str, Enum):
-    """Defines possible actions for detected entities based on policy evaluation."""
-    ALLOW = "allow"
-    ANONYMIZE = "anonymize"
-    BLOCK = "block"
-
-
-class RiskLevel(str, Enum):
-    """Defines risk levels for detected entities based on policy evaluation."""
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    CRITICAL = "critical"
-    UNKNOWN = "unknown"
-
-
-# -----------------------------
-# Lazy-load spaCy model
-# -----------------------------
-
-@lru_cache(maxsize=1)
-def get_spacy_model() -> Any:
-    """Lazy-loads and returns the spaCy model with only the NER component enabled."""
-    try:
-        # Disable unused components (tagger, parser, lemmatizer) for faster
-        # inference
-        return spacy.load(
-            "en_core_web_sm",
-            disable=[
-                "tagger",
-                "parser",
-                "lemmatizer",
-                "attribute_ruler"])
-    except OSError as exc:
-        # Raise an error instead of falling back to a blank pipeline.
-        error_text = "spaCy model 'en_core_web_sm' not found."
-        error_text += " Please install it with 'python -m spacy download en_core_web_sm'."
-        logger.error(error_text, exc_info=True)
-        raise OSError(error_text) from exc
-
-# -----------------------------
-# Evidence and Entity structures
-# -----------------------------
-
-@dataclass(frozen=True)
-class Evidence:
-    """Represents detector evidence before span canonicalization."""
-    start: int
-    end: int
-    label: str
-    source: str
-    confidence: float
-
-
-@dataclass(frozen=True)
-class SpanCandidate:
-    """Represents one span hypothesis for canonicalization optimization.
-
-    Candidates are merged only by exact `(start, end, label)` equivalence so
-    different span boundaries remain distinct competing hypotheses.
-    """
-    start: int
-    end: int
-    label: str
-    score: float
-    evidence: Tuple[Evidence, ...]
-
-
-@dataclass(frozen=True)
-class Entity:
-    """Represents an entity span with retained provenance (immutable).
-
-    Attributes:
-        text: Surface form in the input text.
-        label: Normalized entity type.
-        start: Inclusive start offset in the input text.
-        end: Exclusive end offset in the input text.
-        source: Primary source tag for this entity instance.
-        evidence_sources: Ordered detector/source lineage contributing to the
-            entity decision (for canonical entities this can include multiple
-            detectors; for direct detections this is typically one source).
-        confidence: Confidence score retained with the entity. For canonical
-            entities this represents normalized vote support within the overlap
-            cluster. For direct detections it is the detector confidence.
-    """
-    text: str
-    label: str
-    start: int
-    end: int
-    source: str
-    evidence_sources: Tuple[str, ...] = ()
-    confidence: float = 0.0
-
-
-# -----------------------------
-# Regex detectors (PII / secrets)
-# -----------------------------
-EMAIL_REGEX = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
-PHONE_REGEX = re.compile(r"\+?\d[\d\s\-]{7,}\d")
-API_KEY_REGEX = re.compile(
-    r"(sk-[a-zA-Z0-9]{10,}|api[_-]?key\s*[:=]\s*[a-zA-Z0-9]+)", re.I)
-
-
-# -----------------------------
-# Label normalization
-# -----------------------------
-def normalize_label(label: str) -> str:
-    """Normalizes entity labels to a consistent set
-        (e.g., GPE and LOC → LOCATION)."""
-    mapping = {
-        "GPE": "LOCATION",
-        "LOC": "LOCATION",
-        "PERSON": "PERSON",
-        "ORG": "ORG",
-    }
-    return mapping.get(label, label)
 
 
 # -----------------------------
 # Evidence detectors
 # -----------------------------
 
-def spacy_evidence(text: str) -> List[Evidence]:
-    """Collects NER evidence from spaCy."""
-    nlp = get_spacy_model()
+
+# Labels spaCy NER is trusted to emit.
+# Restricting to named-entity labels prevents noisy spaCy labels (DATE, CARDINAL,
+# TIME, MONEY, etc.) from generating false positives.
+# ORG is kept because the library contract requires it (policy engine tests expect ORG).
+_SPACY_NER_LABELS = {"PERSON", "LOCATION", "ORG"}
+def spacy_evidence(text: str, model_name: str = "en_core_web_sm") -> List[Evidence]:
+    """Collect NER evidence from spaCy.
+
+    Args:
+        text: Input text to analyze.
+        model_name: spaCy model package name used for detection
+            (default: ``en_core_web_sm``).
+
+    Returns:
+        List of spaCy-origin ``Evidence`` records, restricted to
+        ``_SPACY_NER_LABELS`` (PERSON, LOCATION, ORG) to minimize false positives.
+    """
+    nlp = get_spacy_model(model_name)
     doc = nlp(text)
     evidence: List[Evidence] = []
 
     for ent in doc.ents:
         label = normalize_label(ent.label_)
+        if label not in _SPACY_NER_LABELS:
+            continue
         evidence.append(Evidence(
             start=ent.start_char,
             end=ent.end_char,
@@ -178,33 +76,17 @@ def spacy_evidence(text: str) -> List[Evidence]:
 
     return evidence
 
-def regex_evidence(text: str) -> List[Evidence]:
-    """
-    Collects high-confidence evidence from regex-based PII/secret patterns.
-    """
-    evidence: List[Evidence] = []
-
-    for m in EMAIL_REGEX.finditer(text):
-        evidence.append(Evidence(m.start(), m.end(), "EMAIL", "regex", 0.90))
-
-    for m in PHONE_REGEX.finditer(text):
-        evidence.append(Evidence(m.start(), m.end(), "PHONE", "regex", 0.80))
-
-    for m in API_KEY_REGEX.finditer(text):
-        evidence.append(Evidence(m.start(), m.end(), "API_KEY", "regex", 0.95))
-
-    return evidence
-
-
 # -----------------------------
 # Evidence merge and canonicalization
 # -----------------------------
 SOURCE_WEIGHT: Dict[str, float] = {
-    "spacy": 0.7,
-    "regex": 1.0,
+    "gliner": 1.0,      # Highest weight: GLiNER is most precise for named entities
+    "regex": 1.0,       # Regex patterns also very reliable
+    "org_list": 1.0,    # Curated organization list: very high precision for known orgs
+    "spacy": 0.7,       # Lower weight: spaCy has lower precision on PERSON/LOCATION
     "transformer": 0.8,
     "llm": 0.6,
-    "recurrence": 0.5,  # Lower than detectors — fills gaps, doesn't override
+    "recurrence": 0.4,  # Very conservative: only accepts high-confidence recurrence
 }
 
 # Labels safe for strict lexical recurrence by default.
@@ -212,21 +94,225 @@ RECURRENCE_ALLOWED = {
     "EMAIL",
     "PHONE",
     "API_KEY",
+    "USERNAME",
 }
 
 
-def collect_evidence(
+DEFAULT_SHORT_TEXT_THRESHOLD = 100
+_SUPPORTED_CONTEXT_NER_BACKENDS = {"gliner", "openai-privacy-filter"}
+_BACKEND_ALIASES = {
+    "openai": "openai-privacy-filter",
+    "openai_privacy_filter": "openai-privacy-filter",
+    "openai-privacy-filter": "openai-privacy-filter",
+}
+
+
+def _is_likely_structured_payload(text: str) -> bool:
+    """Heuristic detector for JSON/CSV/key-value heavy payloads."""
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return False
+
+    key_value_lines = sum(1 for ln in lines if ":" in ln)
+    csv_like_lines = sum(1 for ln in lines if ln.count(",") >= 3)
+    braces = text.count("{") + text.count("}") + text.count("[") + text.count("]")
+
+    return (
+        (braces >= 2 and key_value_lines >= 1)
+        or (braces >= 4 and key_value_lines >= 2)
+        or key_value_lines >= 5
+        or csv_like_lines >= 3
+    )
+
+
+def _filter_structured_ner_noise(text: str, ner_evidence: List[Evidence]) -> List[Evidence]:
+    """Drop noisy short/header-like NER entities common in structured payloads."""
+    filtered: List[Evidence] = []
+    noisy_tokens = {
+        "id", "sex", "bod", "time", "state", "city", "country", "postcode",
+        "username", "email", "phone", "passport", "idcard", "participant_id",
+    }
+
+    for item in ner_evidence:
+        if item.label not in {"PERSON", "ORG", "LOCATION"}:
+            filtered.append(item)
+            continue
+
+        surface = text[item.start:item.end].strip()
+        if not surface:
+            continue
+
+        low = surface.lower()
+        if low in noisy_tokens:
+            continue
+        if len(surface) <= 2 and surface.isalpha():
+            continue
+        if len(surface) <= 5 and surface.upper() == surface and surface.isalpha():
+            continue
+
+        # In structured payloads, values often appear as key:value pairs where
+        # regex extraction already assigns the canonical label. NER at these
+        # boundaries tends to be noisy (e.g., city value tagged as PERSON).
+        left_window = text[max(0, item.start - 4):item.start]
+        right_window = text[item.end:min(len(text), item.end + 2)]
+        if ":" in left_window and ("\"" in left_window or "'" in left_window or "," in right_window):
+            continue
+
+        filtered.append(item)
+
+    return filtered
+
+
+def _normalize_short_text_threshold(short_text_threshold: int) -> int:
+    """Returns a safe short-text routing threshold in characters."""
+    if short_text_threshold <= 0:
+        logger.warning(
+            "Invalid short_text_threshold=%s; using default %s",
+            short_text_threshold,
+            DEFAULT_SHORT_TEXT_THRESHOLD,
+        )
+        return DEFAULT_SHORT_TEXT_THRESHOLD
+    return short_text_threshold
+
+
+def _normalize_gliner_threshold(gliner_threshold: Optional[float]) -> Optional[float]:
+    """Returns a safe GLiNER threshold or None to use detector defaults."""
+    if gliner_threshold is None:
+        return None
+    try:
+        value = float(gliner_threshold)
+    except (TypeError, ValueError):
+        logger.warning("Invalid gliner_threshold=%r; ignoring", gliner_threshold)
+        return None
+    if not 0.0 <= value <= 1.0:
+        logger.warning("Out-of-range gliner_threshold=%s; ignoring", value)
+        return None
+    return value
+
+
+def _resolve_context_ner_backend(
+    context_ner_backend: Optional[str],
+    use_gliner: Optional[bool],
+) -> str:
+    """Resolve long-text context backend with backward-compatible aliases.
+
+    Preferred API uses ``context_ner_backend`` with values:
+    - ``gliner``
+    - ``openai-privacy-filter``
+
+    Legacy mapping:
+    - ``use_gliner=True`` -> ``gliner``
+    - ``use_gliner=False`` -> ``openai-privacy-filter``
+    """
+    if context_ner_backend is not None:
+        backend = str(context_ner_backend).strip().lower()
+        backend = _BACKEND_ALIASES.get(backend, backend)
+        if backend not in _SUPPORTED_CONTEXT_NER_BACKENDS:
+            raise ValueError(
+                "Unsupported context_ner_backend="
+                f"'{context_ner_backend}'. Supported values: "
+                f"{sorted(_SUPPORTED_CONTEXT_NER_BACKENDS)}"
+            )
+        return backend
+
+    if use_gliner is None:
+        return "gliner"
+    return "gliner" if bool(use_gliner) else "openai-privacy-filter"
+
+
+def get_context_ner_backend_detector(
+    backend_name: str,
+    gliner_threshold: Optional[float] = None,
+    llm_fn: Optional[Callable[[str], List[Evidence]]] = None,
+) -> Callable[[str], List[Evidence]]:
+    """Load and return the detection function for the specified context NER backend.
+
+    This factory function instantiates backend-specific configurations and returns
+    a callable that takes text and returns a list of Evidence records.
+
+    Args:
+        backend_name: The backend identifier ('gliner' or 'openai-privacy-filter').
+        gliner_threshold: Optional GLiNER confidence threshold in [0.0, 1.0].
+            Only used for the 'gliner' backend.
+        llm_fn: Optional custom LLM detector callable. If provided, replaces the
+            built-in OpenAI LLM detector for 'openai-privacy-filter' backend.
+
+    Returns:
+        A callable with signature Callable[[str], List[Evidence]] that detects
+        entities in the given text using the specified backend.
+
+    Raises:
+        ValueError: If backend_name is not supported.
+    """
+    backend = str(backend_name).strip().lower()
+
+    if backend == "gliner":
+        def gliner_detector(text: str) -> List[Evidence]:
+            """GLiNER-based context NER detector."""
+            return gliner_evidence(
+                text,
+                targets=["PERSON", "LOCATION", "ORGANIZATION"],
+                threshold=gliner_threshold,
+            )
+        return gliner_detector
+
+    elif backend == "openai-privacy-filter":
+        def openai_detector(text: str) -> List[Evidence]:
+            """OpenAI privacy-filter context NER detector."""
+            return openai_privacy_filter_evidence(text)
+        return openai_detector
+
+    else:
+        raise ValueError(
+            f"Unsupported context NER backend: '{backend_name}'. "
+            f"Supported backends: {sorted(_SUPPORTED_CONTEXT_NER_BACKENDS)}"
+        )
+
+
+def collect_evidence(  # pylint: disable=too-many-arguments
     text: str,
     *,
+    known_orgs: Optional[List[str]] = None,
+    spacy_model_name: str = "en_core_web_sm",
+    short_text_threshold: int = DEFAULT_SHORT_TEXT_THRESHOLD,
+    use_gliner: bool = True,
+    context_ner_backend: Optional[str] = None,
+    gliner_threshold: Optional[float] = None,
     use_transformer: bool = False,
     use_llm: bool = False,
     transformer_fn: Optional[Callable[[str], List[Evidence]]] = None,
     llm_fn: Optional[Callable[[str], List[Evidence]]] = None,
 ) -> List[Evidence]:
-    """Collects raw evidence from spaCy, regex, and optionally transformer/LLM layers.
+    """Collects raw evidence from an adaptive cascade and optional layers.
+
+        Adaptive routing:
+        - Fast track (``len(text) < short_text_threshold``): regex + spaCy.
+        - Context track (``len(text) >= short_text_threshold``):
+            regex + long-text context backend (GLiNER or OpenAI privacy filter).
+
+    Detection order (for compliance-friendly auditing and deterministic behavior):
+    1. known_orgs: Explicit organization list (if provided) - highest confidence
+    2. regex: Pattern-based PII detection (always enabled)
+     3. Adaptive NER route:
+         - short text: spaCy
+         - long text: GLiNER or OpenAI privacy filter
+    4. transformer/LLM: Optional advanced detectors
 
     Args:
         text: Input text to run detectors over.
+        known_orgs: Optional list of known organization names to match (case-insensitive).
+                   Detected with confidence 0.95 for compliance-friendly auditing.
+        spacy_model_name: spaCy model package name for NER.
+        short_text_threshold: Character threshold controlling adaptive routing.
+            Inputs shorter than this value use the fast route (regex + spaCy),
+            while longer inputs use the context backend.
+        use_gliner: Backward-compatible toggle for long-text GLiNER routing.
+            When ``False``, maps to ``openai-privacy-filter``.
+        context_ner_backend: Long-text context backend selection.
+            Supported values: ``gliner`` and ``openai-privacy-filter``.
+            Defaults to ``gliner`` when not provided.
+        gliner_threshold: Optional GLiNER confidence threshold in [0.0, 1.0].
+            When None, GLiNER uses its own default resolution behavior.
         use_transformer: Master switch for the transformer detector layer. Must be
             ``True`` for the layer to run. When ``True`` and no *transformer_fn* is
             provided, uses the built-in BERT NER detector (requires
@@ -240,13 +326,170 @@ def collect_evidence(
             when *use_transformer* is ``False``.
         llm_fn: Custom LLM detector callable. Replaces the built-in LLM layer
             when *use_llm* is ``True``. Has no effect when *use_llm* is ``False``.
+
+    Returns:
+        Aggregated evidence from enabled detector layers.
     """
-    evidence = spacy_evidence(text) + regex_evidence(text)
+    short_text_threshold = _normalize_short_text_threshold(short_text_threshold)
+    context_backend = _resolve_context_ner_backend(context_ner_backend, use_gliner)
+    evidence = regex_evidence(text)
+    structured_payload = _is_likely_structured_payload(text)
+
+    # 0. Fast pre-filtering with known organization list (compliance-friendly)
+    if known_orgs:
+        evidence += org_list_evidence(text, known_orgs)
+
+    # 1. Adaptive NER route: fast path for short structured payloads,
+    # context path for longer narrative payloads.
+    if len(text) < short_text_threshold:
+        logger.debug(
+            "Adaptive detector route=fast len=%s threshold=%s",
+            len(text),
+            short_text_threshold,
+        )
+        ner_evidence = spacy_evidence(text, model_name=spacy_model_name)
+        if structured_payload:
+            ner_evidence = _filter_structured_ner_noise(text, ner_evidence)
+        evidence += ner_evidence
+    else:
+        logger.debug(
+            "Adaptive detector route=context len=%s threshold=%s backend=%s",
+            len(text),
+            short_text_threshold,
+            context_backend,
+        )
+        # Load the appropriate context NER backend detector
+        backend_detector = get_context_ner_backend_detector(
+            context_backend,
+            gliner_threshold=gliner_threshold,
+            llm_fn=llm_fn,
+        )
+        ner_evidence = backend_detector(text)
+
+        if structured_payload:
+            ner_evidence = _filter_structured_ner_noise(text, ner_evidence)
+        evidence += ner_evidence
+
     if use_transformer:
         evidence += (transformer_fn or transformer_evidence)(text)
-    if use_llm:
+    if use_llm and context_backend != "openai-privacy-filter":
         evidence += (llm_fn or llm_evidence)(text)
     return evidence
+
+
+def _resolve_spacy_model_name(options: Dict[str, Any]) -> str:
+    """Resolves configured spaCy model from options.
+
+    Supports both `spacy_model_name` (preferred) and `model_name` (alias).
+    """
+    return str(options.get("spacy_model_name") or options.get("model_name") or "en_core_web_sm")
+
+
+def _resolve_short_text_threshold(options: Dict[str, Any]) -> int:
+    """Resolves adaptive short-text threshold from options with validation."""
+    raw = options.get("short_text_threshold", DEFAULT_SHORT_TEXT_THRESHOLD)
+    try:
+        threshold = int(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid short_text_threshold value=%r; using default %s",
+            raw,
+            DEFAULT_SHORT_TEXT_THRESHOLD,
+        )
+        return DEFAULT_SHORT_TEXT_THRESHOLD
+    return _normalize_short_text_threshold(threshold)
+
+
+def _resolve_gliner_threshold(options: Dict[str, Any]) -> Optional[float]:
+    """Resolve optional GLiNER threshold from options with validation."""
+    raw = options.get("gliner_threshold", None)
+    return _normalize_gliner_threshold(cast(Optional[float], raw))
+
+# -----------------------------
+# Adjacent Same-Label Merger
+# -----------------------------
+# pylint: disable=too-many-locals
+def _merge_adjacent_same_label_entities(text: str, entities: List[Entity]) -> List[Entity]:
+    """Merge adjacent entities of the same label separated only by whitespace.
+
+    When two consecutive entities have the same label and are separated
+    only by whitespace (spaces, tabs, newlines), merge them into a single
+    entity spanning both tokens plus the whitespace between them.
+
+    Examples:
+        - "John" (PERSON) + space + "Smith" (PERSON) → "John Smith" (PERSON)
+        - "user@" (EMAIL) + space + "domain.com" (EMAIL) → "user@ domain.com" (EMAIL)
+
+    This postprocessing step increases recall for entities that are split
+    across detector boundaries (e.g., multi-token names from spaCy NER).
+
+    Args:
+        text: The original input text (needed to extract whitespace between spans).
+        entities: Non-overlapping, sorted list of Entity objects.
+
+    Returns:
+        Merged list of Entity objects with same-label adjacencies collapsed.
+    """
+    if len(entities) <= 1:
+        return entities
+
+    merged: List[Entity] = []
+    i = 0
+
+    while i < len(entities):
+        current = entities[i]
+
+        # Look ahead for adjacent same-label entities
+        j = i + 1
+        last_end = current.end  # Track the end of the last entity in the merge sequence
+
+        while j < len(entities):
+            next_ent = entities[j]
+
+            # Must have same label to merge
+            if next_ent.label != current.label:
+                break
+
+            # Check if separated only by whitespace (from last merged entity to next)
+            gap_text = text[last_end:next_ent.start]
+            if gap_text and gap_text.strip() == "":
+                # Only whitespace between them; can merge
+                j += 1
+                last_end = next_ent.end  # Update last_end for next iteration
+            else:
+                # Gap contains non-whitespace; stop merging
+                break
+
+        if j > i + 1:
+            # Merged multiple entities: current spans from i to j-1
+            first = entities[i]
+            last = entities[j - 1]
+            merged_text = text[first.start:last.end]
+
+            # Preserve evidence sources and take average confidence
+            all_evidence_sources = set()
+            total_confidence = 0.0
+            for k in range(i, j):
+                all_evidence_sources.update(entities[k].evidence_sources)
+                total_confidence += entities[k].confidence
+            avg_confidence = total_confidence / (j - i)
+
+            merged.append(Entity(
+                text=merged_text,
+                label=current.label,
+                start=first.start,
+                end=last.end,
+                source=current.source,
+                evidence_sources=tuple(sorted(all_evidence_sources)),
+                confidence=avg_confidence,
+            ))
+            i = j
+        else:
+            # No merge; keep current entity as-is
+            merged.append(current)
+            i += 1
+
+    return merged
 
 
 # -----------------------------
@@ -292,6 +535,56 @@ def assert_text_span_integrity(text: str, entities: List[Entity]) -> None:
                 f"expected '{expected}'"
             )
 
+label_prior: Dict[str, float] = {
+        "PERSON": 0.1,
+        "ORG": 0.1,
+        "LOCATION": 0.1,
+        "EMAIL": 0.1,
+        "PHONE": 0.1,
+        "API_KEY": 0.15,
+    }
+
+EMAIL_FRAGMENT_PENALTY = 1.25
+
+def _score_candidate(candidate_evidence: Tuple[Evidence, ...], label: str) -> float:
+    """
+    Deterministic scoring for one exact span+label hypothesis.
+
+    This function assigns a score to each span candidate during canonicalization.
+    The score is used to select the globally optimal, non-overlapping set of entity spans.
+
+    Scoring components:
+    - Sums the confidence values from all supporting evidence sources.
+    - Adds up reliability weights for each evidence source (from SOURCE_WEIGHT).
+            - Adds a capped linear bonus based on span length
+                (`min(0.15 * span_len, 2.0)`) to discourage fragmentation while
+                avoiding over-preference for very long spans.
+    - Adds a label prior (from label_prior) to favor certain entity types if needed.
+
+    The total score is the sum of these components. Higher scores mean the
+    candidate is more likely to be selected.
+
+    Purpose:
+    - Ensures deterministic, transparent, and tunable scoring for canonicalization.
+            - Discourages over-fragmentation without letting span length dominate
+                detector evidence.
+    - Makes the canonicalization process robust and auditable.
+    """
+    confidence_sum = sum(item.confidence for item in candidate_evidence)
+    source_reliability = sum(
+        SOURCE_WEIGHT.get(item.source, 0.5)
+        for item in candidate_evidence
+    )
+    span_len = candidate_evidence[0].end - candidate_evidence[0].start
+    # Capped linear bonus reduces fragmentation without over-biasing long spans.
+    span_length_bonus = min(0.15 * span_len, 2.0)
+    return (
+        confidence_sum
+        + source_reliability
+        + span_length_bonus
+        + label_prior.get(label, 0.0)
+    )
+
 def canonicalize_spans(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
         text: str, evidence: List[Evidence]) -> List[Entity]:
     """
@@ -328,68 +621,38 @@ def canonicalize_spans(  # pylint: disable=too-many-locals,too-many-branches,too
     if not valid:
         return []
 
+    regex_email_spans = {
+        (item.start, item.end)
+        for item in valid
+        if item.label == "EMAIL" and item.source == "regex"
+    }
+
+    def _is_inside_regex_email(start: int, end: int) -> bool:
+        """Returns True when span is a strict subspan of a regex-validated EMAIL."""
+        return any(
+            email_start <= start and end <= email_end and (start, end) != (email_start, email_end)
+            for email_start, email_end in regex_email_spans
+        )
+
     # Step 1: merge only exact-equivalent hypotheses.
     grouped: Dict[Tuple[int, int, str], List[Evidence]] = defaultdict(list)
     for item in valid:
         grouped[(item.start, item.end, item.label)].append(item)
 
-    label_prior: Dict[str, float] = {
-        "PERSON": 0.05,
-        "ORG": 0.05,
-        "LOCATION": 0.05,
-        "EMAIL": 0.1,
-        "PHONE": 0.1,
-        "API_KEY": 0.15,
-    }
-
-    def _score_candidate(candidate_evidence: Tuple[Evidence, ...], label: str) -> float:
-        """
-        Deterministic scoring for one exact span+label hypothesis.
-
-        This function assigns a score to each span candidate during canonicalization.
-        The score is used to select the globally optimal, non-overlapping set of entity spans.
-
-        Scoring components:
-        - Sums the confidence values from all supporting evidence sources.
-        - Adds up reliability weights for each evidence source (from SOURCE_WEIGHT).
-                - Adds a capped linear bonus based on span length
-                    (`min(0.15 * span_len, 2.0)`) to discourage fragmentation while
-                    avoiding over-preference for very long spans.
-        - Adds a label prior (from label_prior) to favor certain entity types if needed.
-
-        The total score is the sum of these components. Higher scores mean the
-        candidate is more likely to be selected.
-
-        Purpose:
-        - Ensures deterministic, transparent, and tunable scoring for canonicalization.
-                - Discourages over-fragmentation without letting span length dominate
-                    detector evidence.
-        - Makes the canonicalization process robust and auditable.
-        """
-        confidence_sum = sum(item.confidence for item in candidate_evidence)
-        source_reliability = sum(
-            SOURCE_WEIGHT.get(item.source, 0.5)
-            for item in candidate_evidence
-        )
-        span_len = candidate_evidence[0].end - candidate_evidence[0].start
-        # Capped linear bonus reduces fragmentation without over-biasing long spans.
-        span_length_bonus = min(0.15 * span_len, 2.0)
-        return (
-            confidence_sum
-            + source_reliability
-            + span_length_bonus
-            + label_prior.get(label, 0.0)
-        )
-
     candidates: List[SpanCandidate] = []
     for (start, end, label), items in grouped.items():
         merged_evidence = tuple(sorted(items, key=lambda ev: (ev.source, ev.confidence)))
+        score = _score_candidate(merged_evidence, label)
+        if label in _SPACY_NER_LABELS and _is_inside_regex_email(start, end):
+            # Prefer full regex-validated email spans over NER fragments
+            # such as PERSON/ORG chunks inside local-part/domain tokens.
+            score -= EMAIL_FRAGMENT_PENALTY
         candidates.append(
             SpanCandidate(
                 start=start,
                 end=end,
                 label=label,
-                score=_score_candidate(merged_evidence, label),
+                score=score,
                 evidence=merged_evidence,
             )
         )
@@ -570,7 +833,7 @@ def recurrence_evidence(  # pylint: disable=too-many-locals
             (default: EMAIL, PHONE, API_KEY; PERSON and ORG are gated by heuristics).
         - For each eligible canonical entity, scans for exact substring matches in the text,
             with strict boundary checks (word/non-word/whitespace) to avoid overmatching.
-        - Skips spans already covered by canonical entities; ensures no overlap with 
+        - Skips spans already covered by canonical entities; ensures no overlap with
             canonical spans.
         - Emits new Evidence records with ``source="recurrence"`` for each safe,
             non-overlapping recurrence found.
@@ -605,9 +868,6 @@ def recurrence_evidence(  # pylint: disable=too-many-locals
 
     covered: List[Tuple[int, int]] = sorted((e.start, e.end) for e in canonical)
     result: List[Evidence] = []
-
-
-
 
     for entity in canonical:
         if not _is_recurrence_eligible(entity):
@@ -738,7 +998,7 @@ class IdentityEngine:
         self.hash_len = hash_len
 
     def generate_id(self, text: str, label: str) -> str:
-        """Generates a deterministic ID for a given entity text and label, 
+        """Generates a deterministic ID for a given entity text and label,
             optionally scoped by salt.
 
         The same (text, label, salt, hash_len) tuple always produces the same ID.
@@ -799,9 +1059,23 @@ def reverse_transform(text: str, mapping: Dict[str, Dict[str, Any]]) -> str:
     when one token is a prefix of another (unlikely given SHA-256 IDs, but safe).
     """
     start = time.perf_counter()
-    result = text
+    # Pre-validate mapping first so failures are all-or-nothing and never
+    # produce a partially de-anonymized mixed output.
+    replacements: List[Tuple[str, str]] = []
     for eid in sorted(mapping, key=len, reverse=True):
-        result = result.replace(eid, mapping[eid]["text"])
+        metadata = mapping[eid]
+        if not isinstance(metadata, dict):
+            raise ValueError(f"Invalid mapping entry for {eid}: expected dict metadata")
+        if "text" not in metadata:
+            raise ValueError(f"Invalid mapping entry for {eid}: missing 'text'")
+        replacement_text = metadata["text"]
+        if not isinstance(replacement_text, str):
+            raise ValueError(f"Invalid mapping entry for {eid}: 'text' must be str")
+        replacements.append((eid, replacement_text))
+
+    result = text
+    for eid, replacement_text in replacements:
+        result = result.replace(eid, replacement_text)
     log_audit_event(
         operation="reverse_transform",
         session_id="",
@@ -815,63 +1089,6 @@ def reverse_transform(text: str, mapping: Dict[str, Dict[str, Any]]) -> str:
 # -----------------------------
 # Policy Engine
 # -----------------------------
-
-@dataclass
-class PolicyRule:
-    """Defines a policy rule for a specific entity label, including the
-        action to take and the associated risk level."""
-    label: str
-    action: PolicyAction
-    risk: RiskLevel
-
-
-DEFAULT_POLICY: Dict[str, PolicyRule] = {
-    "PERSON": PolicyRule("PERSON", PolicyAction.ANONYMIZE, RiskLevel.MEDIUM),
-    "ORG": PolicyRule("ORG", PolicyAction.ANONYMIZE, RiskLevel.MEDIUM),
-    "LOCATION": PolicyRule("LOCATION", PolicyAction.ANONYMIZE, RiskLevel.LOW),
-    "EMAIL": PolicyRule("EMAIL", PolicyAction.ANONYMIZE, RiskLevel.HIGH),
-    "PHONE": PolicyRule("PHONE", PolicyAction.ANONYMIZE, RiskLevel.HIGH),
-    "API_KEY": PolicyRule("API_KEY", PolicyAction.ANONYMIZE, RiskLevel.CRITICAL),
-}
-
-
-DEFAULT_UNDEFINED_POLICY_RISK = RiskLevel.UNKNOWN
-
-
-class PolicyDecisionReason(str, Enum):
-    """Enumerates reasons for a policy decision (explicit rule or fallback)."""
-    EXPLICIT = "explicit_rule"
-    FALLBACK = "fallback_rule"
-
-
-@dataclass(frozen=True)
-class PolicyDecision:
-    """Represents the decision made by the PolicyEngine for a specific entity.
-
-    Includes the entity's label, the action to take, the associated risk level,
-    and the reason for the decision.
-    """
-    label: str
-    action: PolicyAction
-    risk: RiskLevel
-    reason: PolicyDecisionReason
-
-
-@dataclass(frozen=True)
-class PolicyContext:
-    """Optional context payload for future policy decisions.
-
-    The current PolicyEngine implementation remains label-only, but this
-    structure is threaded through evaluation so future policies can use
-    additional signals (context, confidence, detector source, etc.) without
-    changing the public call shape.
-    """
-    text: str
-    confidence: float
-    source: str
-    evidence_sources: Tuple[str, ...] = ()
-    metadata: Optional[Dict[str, Any]] = None
-
 
 class PolicyEngine:
     """PolicyEngine determines the action to take for each detected
@@ -951,10 +1168,21 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
             only).  Any object satisfying the :class:`~taivium.session_store.SessionStore`
             protocol is accepted (``RedisSessionStore``, custom backends, etc.).
         id_salt (str, optional):
-            Optional salt to scope entity IDs to a tenant, session, or namespace. 
+            Optional salt to scope entity IDs to a tenant, session, or namespace.
             If not provided, IDs are globally stable (legacy behavior).
         id_hash_len (int, optional):
             Number of hex digits to use from the hash (default 12 for legacy compatibility).
+        spacy_model_name (str, optional):
+            spaCy model package name used for NER detection.
+            Defaults to ``en_core_web_sm``.
+        model_name (str, optional):
+            Backward-compatible alias for ``spacy_model_name``.
+            If both are provided, ``model_name`` takes precedence.
+        context_ner_backend (str, optional):
+            Long-text context backend. Supported values are
+            ``"gliner"`` and ``"openai-privacy-filter"``.
+            Short-text routing always uses spaCy.
+            If not provided, defaults to ``"gliner"``.
 
     Usage Examples:
         # Default (global, legacy-stable IDs)
@@ -972,20 +1200,29 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         # Both salt and custom hash length
         engine = Taivium(id_salt="tenant_1234", id_hash_len=24)
     """
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments
         self,
         policy_engine: Optional[PolicyEngine] = None,
         session_store: Optional[SessionStore] = None,
+        use_gliner: bool = True,
+        context_ner_backend: Optional[str] = None,
         use_transformer: bool = False,
         use_llm: bool = False,
         transformer_fn: Optional[Callable[[str], List[Evidence]]] = None,
         llm_fn: Optional[Callable[[str], List[Evidence]]] = None,
+        spacy_model_name: str = "en_core_web_sm",
+        model_name: Optional[str] = None,
+        short_text_threshold: int = DEFAULT_SHORT_TEXT_THRESHOLD,
+        gliner_threshold: Optional[float] = None,
         id_salt: Optional[str] = None,
         id_hash_len: int = 12,
     ):  # pylint: disable=too-many-arguments
         """
+        spacy_model_name: spaCy model package name used by NER.
+        model_name: Backward-compatible alias for spacy_model_name.
+            If both are provided, model_name takes precedence.
         id_salt: Optional string to scope entity IDs (tenant/session/namespace).
-        id_hash_len: Number of hex digits to use from the hash (default 12 for 
+        id_hash_len: Number of hex digits to use from the hash (default 12 for
         legacy compatibility).
         If not provided, IDs are globally stable (legacy behavior).
         """
@@ -994,18 +1231,26 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         self.session_store = (
             session_store if session_store is not None else InMemorySessionStore()
         )
+        self.context_ner_backend = _resolve_context_ner_backend(context_ner_backend, use_gliner)
+        self.use_gliner = self.context_ner_backend == "gliner"
         self.use_transformer = use_transformer
         self.use_llm = use_llm
         self.transformer_fn = transformer_fn
         self.llm_fn = llm_fn
+        self.spacy_model_name = model_name or spacy_model_name
+        self.short_text_threshold = _normalize_short_text_threshold(short_text_threshold)
+        self.gliner_threshold = _normalize_gliner_threshold(gliner_threshold)
         self.latency_history: List[float] = []  # Stores recent processing latencies in milliseconds
 
-    def process(self, text: str) -> Dict[str, Any]:  # pylint: disable=too-many-locals
+    # pylint: disable=too-many-locals
+    def process(self, text: str, known_orgs: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         Process text through the privacy pipeline.
 
         Pipeline:
-            Detectors (spaCy/regex/LLM/transformer)
+            Detectors (adaptive: regex+spaCy for short text,
+            regex+GLiNER or regex+OpenAI privacy filter for long text,
+            with org_list/LLM/transformer as configured)
             -> Evidence
             -> Canonical span resolver
             -> Identity resolver
@@ -1014,10 +1259,13 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
 
         Detection is uncertain.
         Canonicalization defines truth.
-        Identity is separate from spans.    
-        
+        Identity is separate from spans.
+
         Args:
             text (str): The input text to be processed.
+            known_orgs: Optional list of known organization names to match (case-insensitive).
+                When provided, organizations in this list are detected with high confidence (0.95)
+                before GLiNER ML detection, enabling compliance-friendly auditable detection.
 
         Returns:
             dict: A dictionary containing the original text, anonymized text,
@@ -1025,10 +1273,16 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         """
         start = time.perf_counter()
 
-        logger.info("Processing text: %.60r", text[:60])
+        logger.info("Processing text payload redacted (len=%d)", len(text))
         # Step 1: collect raw detector evidence.
         evidence = collect_evidence(
             text,
+            known_orgs=known_orgs,
+            spacy_model_name=self.spacy_model_name,
+            use_gliner=self.use_gliner,
+            context_ner_backend=self.context_ner_backend,
+            gliner_threshold=self.gliner_threshold,
+            short_text_threshold=self.short_text_threshold,
             use_transformer=self.use_transformer,
             use_llm=self.use_llm,
             transformer_fn=self.transformer_fn,
@@ -1052,6 +1306,22 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         all_ents = canonicalize_spans(text, all_evidence)
 
         logger.info("Canonicalized entities (with recurrence): %d", len(all_ents))
+
+        # Filter out template placeholders (e.g. [Your Name], [Your Position]).
+        # These are never real PII — they are document template markers that NER
+        # models sometimes misclassify as PERSON/ORG.
+        before_filter = len(all_ents)
+        all_ents = [e for e in all_ents if not _is_placeholder(e)]
+        if len(all_ents) < before_filter:
+            logger.debug("Filtered %d placeholder entities", before_filter - len(all_ents))
+
+        # Merge adjacent entities of the same label separated only by whitespace.
+        # Example: "John" (PERSON) + space + "Smith" (PERSON) → "John Smith" (PERSON)
+        before_merge = len(all_ents)
+        all_ents = _merge_adjacent_same_label_entities(text, all_ents)
+        if len(all_ents) < before_merge:
+            logger.debug(
+                "Merged adjacent same-label entities: %d → %d", before_merge, len(all_ents))
 
         # Hard invariant before identity/policy/transform stages.
         assert_non_overlapping(all_ents)
@@ -1149,15 +1419,24 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
 
 
 # Thread-safe cache for Taivium instances keyed by options
-_engine_cache: Dict[Tuple[bool, bool, Optional[str], int], Taivium] = {}
+_engine_cache: Dict[Tuple[bool, bool, str, int, Optional[float], str, Optional[str], int], Taivium] = {}
 _engine_cache_lock = threading.Lock()
 
 
-def _options_key(parsed_options: Dict[str, Any]) -> Tuple[bool, bool, Optional[str], int]:
+def _options_key(
+    parsed_options: Dict[str, Any],
+) -> Tuple[bool, bool, str, int, Optional[float], str, Optional[str], int]:
     # Only use options that affect instantiation, and make them hashable
     return (
         bool(parsed_options.get("use_transformer", False)),
         bool(parsed_options.get("use_llm", False)),
+        _resolve_spacy_model_name(parsed_options),
+        _resolve_short_text_threshold(parsed_options),
+        _resolve_gliner_threshold(parsed_options),
+        _resolve_context_ner_backend(
+            cast(Optional[str], parsed_options.get("context_ner_backend")),
+            cast(Optional[bool], parsed_options.get("use_gliner", True)),
+        ),
         parsed_options.get("id_salt") or None,
         int(parsed_options.get("id_hash_len", 12)),
         # Do not include non-hashable objects like functions or custom classes
@@ -1296,16 +1575,22 @@ def module_engine_process(text: str, options: Any = None) -> "Dict[str, Any]":
     """
     Thread-safe, multi-config process function for gRPC server or programmatic use.
     Accepts options as a dict or JSON string. Caches Taivium instances by options for efficiency.
-    
+
     Supports per-tenant session stores:
     - If 'tenant_id' is in options, creates a RedisSessionStore with that tenant
         - Uses SESSION_TTL_SECONDS as default TTL and optional
             TENANT_SESSION_TTL_SECONDS JSON map for tenant overrides
     - Falls back to InMemorySessionStore if Redis not configured
+
+        Supported model options:
+        - `spacy_model_name` (preferred): spaCy model package name for NER
+        - `model_name` (alias): backward-compatible alias of `spacy_model_name`
+            If both are provided, `spacy_model_name` is used for instantiation and
+            cache keying via unified resolution.
     """
     _logger = logging.getLogger("taivium.engine")
     _logger.info(
-        "[DEBUG] process() called with text type: %s, options type: %s", 
+        "[DEBUG] process() called with text type: %s, options type: %s",
         type(text).__name__, type(options).__name__)
 
     parsed_options, options_error = _parse_module_engine_options(options, _logger)
@@ -1315,7 +1600,7 @@ def module_engine_process(text: str, options: Any = None) -> "Dict[str, Any]":
     # Extract tenant_id if present (used for per-tenant session store and ID salt)
     tenant_id = parsed_options.pop("tenant_id", None)
     session_store = _build_tenant_session_store(tenant_id, _logger)
-    
+
     # Use tenant_id as automatic id_salt if not explicitly provided by user
     # This ensures different tenants get different anonymized IDs for the same content
     if tenant_id and not parsed_options.get("id_salt"):

@@ -8,9 +8,9 @@ from taivium.engine import (
     PolicyAction,
     PolicyEngine,
     PolicyRule,
-    Taivium,
-    RiskLevel,
+    Taivium
 )
+from taivium.defs import RiskLevel
 from taivium.session_store import RedisSessionStore
 
 # pylint: disable=invalid-name
