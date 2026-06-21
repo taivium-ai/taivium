@@ -351,7 +351,186 @@ text = """
 
 ---
 
-#### 3.2.1.1 Canonical Span Resolution
+#### 3.2.1.1 Backend Architecture and Modularization
+
+The detection layer uses pluggable backend modules that encapsulate different NER strategies. This modular design enables:
+
+* **Strategy isolation**: Each backend implementation is self-contained and can be tested independently
+* **Lazy loading**: Backends are loaded on-demand to minimize startup overhead
+* **Provider flexibility**: Easy switching between different detection engines
+* **Dependency isolation**: Backend-specific dependencies (GLiNER, OpenAI SDK) are imported only when needed
+
+##### Backend Directory Structure
+
+```
+src/taivium/backend/
+├── __init__.py
+├── transformer_gliner.py      # GLiNER-specific long-form NER with DeBERTa chunking
+└── transformer_openai_privacy_filter.py  # OpenAI API-based detection (optional)
+```
+
+##### Backend Loading and Routing
+
+The `_resolve_context_ner_backend()` function in `engine.py` implements adaptive routing:
+
+```python
+def _resolve_context_ner_backend(text, use_gliner=True):
+    """
+    Select appropriate NER backend based on text length and configuration.
+    
+    - len(text) < 100 chars  → spaCy (via Layer 2 regex/spacy evidence)
+    - len(text) >= 100 chars → GLiNER (from backend.transformer_gliner)
+    """
+    if not use_gliner:
+        return None  # Use spaCy fallback
+    
+    if len(text) < 100:
+        return None  # Short text: handled by spaCy in Layer 2
+    
+    # Long text: load GLiNER backend
+    from .backend.transformer_gliner import get_gliner_model
+    model = get_gliner_model()
+    return model
+```
+
+**Key routing parameters:**
+- `short_text_threshold = 100` (chars): threshold for switching between spaCy and GLiNER
+- `use_gliner = True` (default): enable/disable GLiNER long-form detection
+- `use_transformer = False` (opt-in): enable transformer-based detection (Layer 3)
+- `use_llm = False` (opt-in): enable LLM-based detection (Layer 4)
+
+##### GLiNER Backend (`transformer_gliner.py`)
+
+**Purpose:** High-accuracy entity extraction for longer texts (100+ characters) using context-aware neural NER.
+
+**Key Features:**
+* **DeBERTa tokenization**: Uses the exact tokenizer from GLiNER's inference engine (DeBERTa) for chunking to ensure token count accuracy and avoid truncation
+* **ONNX acceleration**: Supports provider selection in priority order: CoreML (M-series Macs) → CUDA (NVIDIA GPUs) → CPU
+* **Chunked inference**: Splits long texts into 384-token chunks with overlap for boundary preservation
+* **Entity recovery**: Remaps chunk-level offsets back to original text coordinates
+
+**Chunking Algorithm:**
+
+1. Extract GLiNER's native DeBERTa tokenizer from model
+2. Tokenize text with offset mapping (`return_offsets_mapping=True`)
+3. Reserve 2 tokens for [CLS]/[SEP], use max 382 content tokens
+4. Split at token boundaries to avoid mid-token splits
+5. Apply configurable overlap (default: 64 tokens) to preserve boundary entities
+6. Remap chunk-local offsets back to document-global offsets
+
+**Example:**
+```python
+from taivium.backend.transformer_gliner import get_gliner_model, chunk_text_for_gliner
+
+model = get_gliner_model()  # Lazy-loaded on first call
+chunks = chunk_text_for_gliner(long_text, model=model, chunk_size=384, overlap=64)
+
+# Process each chunk
+for chunk in chunks:
+    entities = model.predict_entities(
+        chunk["text"],
+        labels=["PERSON", "ORG", "EMAIL", "PHONE"]
+    )
+    # Remap offsets to original text
+    for entity in entities:
+        entity["start"] += chunk["start_offset"]
+        entity["end"] += chunk["start_offset"]
+```
+
+**Performance Characteristics:**
+- Model load: ~400ms (one-time, on first call)
+- Inference per call: ~10-20ms (CPU), ~5-10ms (GPU)
+- Tokenization overhead: ~2-3% of total (DeBERTa ~2.5x faster than spaCy blank)
+- Memory footprint: ~1.2GB (model) + overhead
+
+**ONNX Provider Selection:**
+```python
+def _verify_onnx_provider(model):
+    """
+    Select best available ONNX execution provider in priority order.
+    
+    1. CoreMLExecutionProvider (Apple Silicon M1/M2/M3)
+    2. CUDAExecutionProvider (NVIDIA GPU)
+    3. CPUExecutionProvider (fallback)
+    """
+    available = rt.get_available_providers()
+    providers = [
+        ("CoreMLExecutionProvider", "Apple Neural Engine"),
+        ("CUDAExecutionProvider", "NVIDIA GPU"),
+        ("CPUExecutionProvider", "CPU"),
+    ]
+    
+    for provider_name, label in providers:
+        if provider_name in available:
+            return provider_name
+    
+    return "CPUExecutionProvider"  # Safe fallback
+```
+
+**Code location:** [src/taivium/backend/transformer_gliner.py](../src/taivium/backend/transformer_gliner.py)
+
+**Test coverage:** 47 tests in [tests/test_transformer_gliner.py](../../tests/test_transformer_gliner.py)
+
+##### Utility Functions (`src/taivium/utility.py`)
+
+Generic ONNX provider verification and model loading utilities are centralized in `utility.py` to avoid circular imports:
+
+```python
+from functools import lru_cache
+
+@lru_cache(maxsize=1)
+def get_gliner_model():
+    """
+    Lazy-load GLiNER model, deferring import until first call.
+    Cached to avoid reloading on subsequent calls.
+    """
+    from .backend.transformer_gliner import get_gliner_model as _backend_get_gliner_model
+    return _backend_get_gliner_model()
+
+def _verify_onnx_provider(model):
+    """Generic ONNX provider verification (imported by backends)."""
+    # ... implementation ...
+```
+
+**Rationale for centralization:**
+- `backend.transformer_gliner` imports `_verify_onnx_provider` from utility
+- Utility wraps GLiNER loader in lazy wrapper to defer import and avoid circular dependency
+- Single source of truth for ONNX provider logic
+
+##### OpenAI Privacy Filter Backend (`transformer_openai_privacy_filter.py`)
+
+> **Removed.** The OpenAI-based LLM evidence layer has been replaced by a local llama.cpp backend. See `src/taivium/llm.py` for the current implementation.
+
+The LLM evidence layer (`src/taivium/llm.py`) now uses a local GGUF model via `llama-cpp-python` instead of the OpenAI API.
+
+**Features:**
+* **Local inference**: No API key or network access required — runs entirely on-device
+* **GGUF model format**: Compatible with any instruction-tuned model in GGUF format (e.g. Mistral, LLaMA, Gemma)
+* **GPU acceleration**: Optional via `LLM_N_GPU_LAYERS` environment variable
+* **Error propagation**: Model load and inference errors are logged and re-raised
+
+**Configuration:**
+```bash
+export LLM_MODEL_PATH=/path/to/model.gguf    # required
+export LLM_N_GPU_LAYERS=35                   # optional: GPU layers (default 0 = CPU)
+```
+
+**Usage:**
+```python
+pipeline = Taivium(use_llm=True)
+# Triggers local llama.cpp backend for Layer 4 LLM evidence
+```
+
+**Install:**
+```bash
+pip install taivium[llm]   # installs llama-cpp-python
+```
+
+**Code location:** [src/taivium/llm.py](../src/taivium/llm.py)
+
+---
+
+#### 3.2.1.2 Canonical Span Resolution
 
 Evidence from multiple detectors can conflict. `canonicalize_spans(text, evidence)` resolves this into a single canonical entity set using a **weighted interval scheduling (DP) algorithm**:
 
@@ -720,9 +899,25 @@ spaCy's `en_core_web_sm` model frequently fails to tag single-token names (e.g. 
 
 If no salt is provided, entity IDs are globally stable and can be linked across documents, tenants, or sessions. This may be a privacy risk in regulated or multi-tenant environments. **Always set a unique salt per tenant or session for privacy-preserving deployments.**
 
+### Backend Availability and Graceful Degradation
+
+Taivium backends are optional and gracefully degrade when unavailable:
+
+- **GLiNER backend** (`backend/transformer_gliner.py`): Loaded on-demand for texts ≥100 characters. If unavailable, falls back to spaCy. If both are unavailable, regex-only detection is used.
+- **LLM evidence layer** (`src/taivium/llm.py`): Opt-in via `use_llm=True`. Requires `LLM_MODEL_PATH` set to a local GGUF model file. If the path is unset, the layer is silently skipped. If the model fails to load or inference fails, the error is logged and re-raised.
+- **spaCy model**: Lazy-loaded on first `process()` call. If unavailable, regex-only detection is used.
+
+All failures are non-blocking and logged. Core functionality (regex + policy) always works.
+
 ### Transformer and LLM Detection Layers
 
-Both layers are fully implemented and opt-in. `transformer_evidence()` uses `dslim/bert-base-NER` via HuggingFace `transformers`; `llm_evidence()` uses `gpt-4o-mini` via the OpenAI API. Enable them with `use_transformer=True` and `use_llm=True` on `Taivium`. All layers run additively — each adds to the evidence pool; `canonicalize_spans()` resolves conflicts.
+Both layers are fully implemented and opt-in:
+
+- **Transformer evidence** (Layer 3): Uses `dslim/bert-base-NER` via HuggingFace `transformers`. Enable with `use_transformer=True`.
+
+- **LLM evidence** (Layer 4): Uses a local GGUF model via **llama.cpp** (`llama-cpp-python`), implemented in `src/taivium/llm.py`. Enable with `use_llm=True`. Requires `LLM_MODEL_PATH` environment variable pointing to a GGUF model file. Optionally set `LLM_N_GPU_LAYERS` to offload layers to GPU (default: CPU only). Errors during inference are logged and re-raised.
+
+All layers run additively — each adds to the evidence pool; `canonicalize_spans()` resolves conflicts.
 
 #### 3.2.5.1 GLiNER Tokenization Optimization
 
@@ -773,7 +968,7 @@ Chunk 3: 384 tokens ✓ OK
 Chunk 4: 355 tokens ✓ OK
 ```
 
-**Code Location:** [src/taivium/transformer_gliner.py](../src/taivium/transformer_gliner.py) → `_chunk_text_for_gliner()` function
+**Code Location:** [src/taivium/backend/transformer_gliner.py](../src/taivium/backend/transformer_gliner.py) → `_chunk_text_for_gliner()` function
 
 **Test Coverage:** [tests/test_transformer_gliner.py](../../tests/test_transformer_gliner.py) (47 tests) → `test_chunk_text_for_gliner_exact_token_boundaries` validates token limits
 

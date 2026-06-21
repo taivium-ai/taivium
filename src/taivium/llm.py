@@ -1,14 +1,15 @@
 """
 LLM-assisted NER evidence collector.
 --------------------------------------
-Uses the OpenAI chat completions API (``gpt-4o-mini`` by default) to extract
-named entities from text.  The detector is opt-in: it only runs when
-``use_llm=True`` is passed to :class:`~taivium.engine.Taivium` and an
-``OPENAI_API_KEY`` environment variable is set.
+Uses a local LLM model via llama.cpp (GGUF format) to extract named entities
+from text.  The detector is opt-in: it only runs when ``use_llm=True`` is
+passed to :class:`~taivium.engine.Taivium` and a ``LLM_MODEL_PATH`` environment
+variable is set pointing to a GGUF model file.
 
-Model override::
+Model configuration::
 
-    LLM_MODEL=gpt-4o  # set in environment to use a different model
+    LLM_MODEL_PATH=/path/to/model.gguf  # set in environment to use a local GGUF model
+    LLM_N_GPU_LAYERS=35  # optional: number of layers to offload to GPU (default: 0)
 """
 # pylint: disable=import-outside-toplevel
 from __future__ import annotations
@@ -107,19 +108,20 @@ def _extract_evidence(
     return evidence
 
 def llm_evidence(text: str) -> List[Evidence]:
-    """Collects NER evidence by querying an OpenAI chat model.
+    """Collects NER evidence by querying a local LLM model via llama.cpp.
 
-    Sends *text* to ``gpt-4o-mini`` (or the model set in the
-    ``LLM_MODEL`` environment variable) with a structured prompt
-    that requests a JSON list of entity surface forms and types.  Character
-    offsets are recovered by scanning the source text for each returned
-    surface form.
+    Loads a GGUF model (specified in ``LLM_MODEL_PATH`` environment variable)
+    and runs entity extraction with a structured prompt. Returns a JSON list
+    of entity surface forms and types. Character offsets are recovered by
+    scanning the source text for each returned surface form.
 
     Returns an empty list when:
 
-    * the ``OPENAI_API_KEY`` environment variable is not set
-    * the ``openai`` package is not installed
-    * the API call fails for any reason
+    * the ``LLM_MODEL_PATH`` environment variable is not set
+
+    Raises:
+        Exception: If the model cannot be loaded, inference fails, or JSON
+                   parsing fails. All errors are logged before raising.
 
     Args:
         text: The input text to run entity extraction over.
@@ -128,12 +130,12 @@ def llm_evidence(text: str) -> List[Evidence]:
         A list of :class:`~taivium.engine.Evidence` records with
         ``source="llm"``.
     """
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
+    model_path = os.getenv("LLM_MODEL_PATH")
+    if not model_path:
         if not _WarnState.warned_no_api_key:
             warning_text = (
-                "LLM evidence layer skipped: OPENAI_API_KEY is not set. "
-                "Set the environment variable to enable LLM-assisted NER."
+                "LLM evidence layer skipped: LLM_MODEL_PATH is not set. "
+                "Set the environment variable to a GGUF model file path to enable LLM-assisted NER."
             )
             warnings.warn(
                 warning_text,
@@ -145,23 +147,27 @@ def llm_evidence(text: str) -> List[Evidence]:
         return []
 
     try:
-        from openai import OpenAI  # type: ignore[import]  # pylint: disable=import-outside-toplevel
-        client = OpenAI(api_key=api_key)
-        model = os.getenv("LLM_MODEL", "gpt-4o-mini")
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": text},
-            ],
+        from llama_cpp import Llama  # type: ignore[import]  # pylint: disable=import-outside-toplevel
+        n_gpu_layers = int(os.getenv("LLM_N_GPU_LAYERS", "0"))
+        llm = Llama(
+            model_path=model_path,
+            n_gpu_layers=n_gpu_layers,
+            n_ctx=2048,
+            verbose=False,
+        )
+        prompt_text = f"{_SYSTEM_PROMPT}\n\nText to analyze:\n{text}\n\nJSON output:"
+        response = llm(
+            prompt_text,
             temperature=0,
             max_tokens=1024,
+            stop=["\n\n"],
         )
-        raw = _clean_llm_json(response.choices[0].message.content)
+        raw = response["choices"][0]["text"].strip()
+        raw = _clean_llm_json(raw)
         entities = json.loads(raw)
     except Exception as exc:  # pylint: disable=broad-except
         logger.error("LLM evidence extraction failed: %s", exc, exc_info=True)
-        return []
+        raise
 
     if not isinstance(entities, list):
         return []

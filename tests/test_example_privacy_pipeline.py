@@ -10,6 +10,7 @@ Section 3 tests substitute ``InMemorySessionStore`` for ``RedisSessionStore``
 so the suite runs without a live Redis instance.
 """
 from unittest import mock
+import sys
 
 import pytest
 
@@ -278,28 +279,17 @@ class TestSection4TransformerAndLlm:
 
     @staticmethod
     def _mock_llm(monkeypatch, entities: list):
-        """Patch openai.OpenAI to return a mock client emitting *entities*."""
+        """Inject a mock llama_cpp module that returns *entities* as JSON."""
         import json  # pylint: disable=import-outside-toplevel
 
-        class _Choice:
-            class _Message:
-                content = json.dumps(entities)
-            message = _Message()
+        payload = json.dumps(entities)
 
-        class _Completion:
-            choices = [_Choice()]
+        mock_llama_instance = mock.MagicMock()
+        mock_llama_instance.return_value = {"choices": [{"text": payload}]}
 
-        class _Chat:
-            class _Completions:
-                @staticmethod
-                def create(**_kw):
-                    return _Completion()
-            completions = _Completions()
-
-        class _Client:
-            chat = _Chat()
-
-        monkeypatch.setattr("openai.OpenAI", lambda **kw: _Client())
+        mock_module = mock.MagicMock()
+        mock_module.Llama = mock.MagicMock(return_value=mock_llama_instance)
+        monkeypatch.setitem(sys.modules, "llama_cpp", mock_module)
 
     # ------------------------------------------------------------------
     # Return-shape tests (no extra layers)
@@ -382,7 +372,7 @@ class TestSection4TransformerAndLlm:
     def test_llm_evidence_adds_source(self, monkeypatch):
         """With use_llm=True the llm source appears in evidence_sources."""
         text = "Dr. Emily Clarke joined Horizon AI in Boston."
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        monkeypatch.setenv("LLM_MODEL_PATH", "/path/to/model.gguf")
         self._mock_llm(monkeypatch, [
             {"text": "Emily Clarke", "type": "PERSON"},
         ])
@@ -394,8 +384,10 @@ class TestSection4TransformerAndLlm:
         assert any("llm" in e["evidence_sources"] for e in person_entities)
 
     def test_llm_skipped_without_api_key(self, monkeypatch):
-        """LLM layer is silently skipped when OPENAI_API_KEY is unset."""
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        """LLM layer is silently skipped when LLM_MODEL_PATH is unset."""
+        monkeypatch.delenv("LLM_MODEL_PATH", raising=False)
+        import taivium.llm as llm_mod  # pylint: disable=import-outside-toplevel
+        llm_mod._WarnState.reset_warning()
         result = run_section4_transformer_and_llm(
             use_transformer=False, use_llm=True, verbose=False
         )
