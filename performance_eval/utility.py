@@ -320,46 +320,6 @@ def get_git_commit_hash(repo_path="."):
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"Failed to get git commit hash: {e.stderr}") from e
 
-
-def get_git_tag(repo_path="."):
-    """Get comma-separated git tag(s) pointing at HEAD, or None if no tags exist."""
-    try:
-        result = subprocess.run(
-            ["git", "tag", "--points-at", "HEAD"],
-            cwd=repo_path,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        tags = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-        return ", ".join(tags) if tags else None
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Failed to get git tag(s): {e.stderr}") from e
-
-
-def check_git_clean(repo_path="."):
-    """Check if git working directory is clean (no staged or unstaged changes).
-    Raises ValueError if there are uncommitted changes.
-    Returns the commit hash if clean."""
-    try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=repo_path,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        status_output = result.stdout.strip()
-        if status_output:
-            raise ValueError(
-                f"Git working directory is not clean. \
-                    Uncommitted changes detected:\n{status_output}"
-            )
-        commit_hash = get_git_commit_hash(repo_path)
-        return commit_hash
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Failed to check git status: {e.stderr}") from e
-
 def conll_to_gold_spans(example, ner_tag_names, label_map):
     """Returns (text, gold_spans) where gold_spans is a set of (start_char, end_char, label)."""
     words = example["tokens"]
@@ -440,16 +400,6 @@ def plot_label_distribution(comparable_golds, dataset_name, profile_name, save_p
     plt.tight_layout()
     plt.savefig(save_path, dpi=150)
     plt.close(fig)
-
-
-def calculate_delta(metrics1, metrics2):
-    """Calculate the delta between two metrics."""
-    delta = {
-        "precision": metrics1["precision"] - metrics2["precision"],
-        "recall": metrics1["recall"] - metrics2["recall"],
-        "f1": metrics1["f1"] - metrics2["f1"],
-    }
-    return delta
 
 
 def get_delta_matrix_tables(settings_results):

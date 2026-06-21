@@ -6,13 +6,17 @@ variable-length text inputs. This module handles texts longer than GLiNER's
 """
 
 import logging
+from functools import lru_cache
 from typing import Any, cast, Dict, List, Optional, Tuple
 import warnings
 import os
+from huggingface_hub import snapshot_download
+from gliner import GLiNER
+import onnxruntime as rt
 
 from transformers.utils import logging as hf_logging
-from ..utility import get_gliner_model
 from ..defs import Evidence, normalize_label
+from ..utility import _verify_onnx_provider
 
 def suppress_gliner_warnings_veified_by_tests():
     """Suppress specific warnings from transformers and ONNX Runtime during GLiNER loading."""
@@ -30,6 +34,87 @@ _GLINER_BATCH_SIZE = 8
 # Tuned default from evaluation sweeps on privacy dataset subsets.
 # Keeps precision and recall near a balanced operating point.
 DEFAULT_GLINER_THRESHOLD = 0.47
+
+
+@lru_cache(maxsize=1)
+def get_gliner_model():
+    """Lazy-load and cache GLiNER ONNX quantized model for faster inference."""
+    try:
+        try:
+            available_providers = rt.get_available_providers()
+            logger.info("Available ONNX providers: %s", available_providers)
+        except ImportError:
+            available_providers = ["CPUExecutionProvider"]
+            logger.warning("onnxruntime not installed, using CPU only")
+
+        preferred_providers = []
+        if "CoreMLExecutionProvider" in available_providers:
+            preferred_providers.append("CoreMLExecutionProvider")
+            logger.info("CoreML provider available (M2/M3 GPU acceleration)")
+        if "CUDAExecutionProvider" in available_providers:
+            preferred_providers.append("CUDAExecutionProvider")
+            logger.info("CUDA provider available (NVIDIA GPU acceleration)")
+        if "CPUExecutionProvider" in available_providers:
+            preferred_providers.append("CPUExecutionProvider")
+
+        selected_provider = (
+            preferred_providers[0]
+            if preferred_providers
+            else "CPUExecutionProvider"
+        )
+        logger.info("Selected ONNX provider: %s", selected_provider)
+
+        repo_id = "onnx-community/gliner_small-v2.1"
+        default_revision = "8142fb00740ccea973e64b1272949ff48653df5e"
+        revision = os.getenv("TAIVIUM_GLINER_REVISION", default_revision)
+        logger.info(
+            "Downloading ONNX GLiNER model from %s at revision %s",
+            repo_id,
+            revision,
+        )
+        local_dir = snapshot_download(repo_id=repo_id, revision=revision)
+
+        onnx_model_file = os.path.join("onnx", "model_quantized.onnx")
+
+        logger.info(
+            "Loading GLiNER from %s with ONNX quantization on %s",
+            local_dir,
+            selected_provider,
+        )
+
+        model = GLiNER.from_pretrained(
+            local_dir,
+            load_onnx_model=True,
+            load_tokenizer=True,
+            onnx_model_file=onnx_model_file,
+            trust_remote_code=True,
+            providers=preferred_providers,
+        )
+
+        actual_provider = _verify_onnx_provider(model)
+        logger.info(
+            "ONNX GLiNER loaded successfully on %s (5-10x faster inference)",
+            actual_provider,
+        )
+
+        if actual_provider != selected_provider:
+            logger.warning(
+                "Provider mismatch: requested %s, but using %s. "
+                "This may indicate GPU unavailability.",
+                selected_provider,
+                actual_provider,
+            )
+
+        return model
+
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.warning(
+            "ONNX GLiNER load failed (%s), falling back to standard weights. "
+            "Inference will be slower. Install onnxruntime for speedup: "
+            "pip install onnxruntime",
+            e,
+        )
+        return GLiNER.from_pretrained("knowledgator/gliner-pii-small-v1.0")
 
 
 def _resolve_gliner_threshold(threshold: Optional[float]) -> float:

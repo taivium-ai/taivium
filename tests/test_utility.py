@@ -2,6 +2,7 @@
 Unit tests for taivium.utility module.'''
 import pytest
 from taivium import utility as utility
+from taivium.backend import transformer_gliner as gliner_backend
 
 # --- GLiNER Model Caching Tests ---
 class TestGetGlinerModel:
@@ -78,26 +79,27 @@ def test_verify_onnx_provider_cpu(monkeypatch):
 # --- get_gliner_model provider selection logic ---
 def test_get_gliner_model_coreml_selected(monkeypatch):
     utility.get_gliner_model.cache_clear()
+    gliner_backend.get_gliner_model.cache_clear()
 
     monkeypatch.setattr(
-        utility.rt,
+        gliner_backend.rt,
         "get_available_providers",
         lambda: ["CoreMLExecutionProvider", "CPUExecutionProvider"],
     )
 
-    monkeypatch.setattr(utility, "snapshot_download", lambda **k: "/tmp/model")
+    monkeypatch.setattr(gliner_backend, "snapshot_download", lambda **k: "/tmp/model")
 
     class DummyModel:
         def predict_entities(self): pass
 
     monkeypatch.setattr(
-        utility.GLiNER,
+        gliner_backend.GLiNER,
         "from_pretrained",
         lambda *a, **k: DummyModel(),
     )
 
     monkeypatch.setattr(
-        utility, "_verify_onnx_provider", lambda m: "CoreMLExecutionProvider"
+        gliner_backend, "_verify_onnx_provider", lambda m: "CoreMLExecutionProvider"
     )
 
     model = utility.get_gliner_model()
@@ -106,26 +108,27 @@ def test_get_gliner_model_coreml_selected(monkeypatch):
 
 def test_get_gliner_model_cuda_selected(monkeypatch):
     utility.get_gliner_model.cache_clear()
+    gliner_backend.get_gliner_model.cache_clear()
 
     monkeypatch.setattr(
-        utility.rt,
+        gliner_backend.rt,
         "get_available_providers",
         lambda: ["CUDAExecutionProvider"],
     )
 
-    monkeypatch.setattr(utility, "snapshot_download", lambda **k: "/tmp/model")
+    monkeypatch.setattr(gliner_backend, "snapshot_download", lambda **k: "/tmp/model")
 
     class DummyModel:
         def predict_entities(self): pass
 
     monkeypatch.setattr(
-        utility.GLiNER,
+        gliner_backend.GLiNER,
         "from_pretrained",
         lambda *a, **k: DummyModel(),
     )
 
     monkeypatch.setattr(
-        utility, "_verify_onnx_provider", lambda m: "CUDAExecutionProvider"
+        gliner_backend, "_verify_onnx_provider", lambda m: "CUDAExecutionProvider"
     )
 
     model = utility.get_gliner_model()
@@ -135,27 +138,28 @@ def test_get_gliner_model_cuda_selected(monkeypatch):
 # --- mismatch warning path ---
 def test_get_gliner_model_provider_mismatch(monkeypatch):
     utility.get_gliner_model.cache_clear()
+    gliner_backend.get_gliner_model.cache_clear()
 
     monkeypatch.setattr(
-        utility.rt,
+        gliner_backend.rt,
         "get_available_providers",
         lambda: ["CUDAExecutionProvider"],
     )
 
-    monkeypatch.setattr(utility, "snapshot_download", lambda **k: "/tmp/model")
+    monkeypatch.setattr(gliner_backend, "snapshot_download", lambda **k: "/tmp/model")
 
     class DummyModel:
         def predict_entities(self): pass
 
     monkeypatch.setattr(
-        utility.GLiNER,
+        gliner_backend.GLiNER,
         "from_pretrained",
         lambda *a, **k: DummyModel(),
     )
 
     # Force mismatch
     monkeypatch.setattr(
-        utility, "_verify_onnx_provider", lambda m: "CPUExecutionProvider"
+        gliner_backend, "_verify_onnx_provider", lambda m: "CPUExecutionProvider"
     )
 
     model = utility.get_gliner_model()
@@ -165,29 +169,30 @@ def test_get_gliner_model_provider_mismatch(monkeypatch):
 # --- onnxruntime ImportError fallback ---
 def test_get_gliner_model_no_onnxruntime(monkeypatch):
     utility.get_gliner_model.cache_clear()
+    gliner_backend.get_gliner_model.cache_clear()
 
     def raise_import_error():
         raise ImportError()
 
     monkeypatch.setattr(
-        utility.rt,
+        gliner_backend.rt,
         "get_available_providers",
         lambda: raise_import_error(),
     )
 
-    monkeypatch.setattr(utility, "snapshot_download", lambda **k: "/tmp/model")
+    monkeypatch.setattr(gliner_backend, "snapshot_download", lambda **k: "/tmp/model")
 
     class DummyModel:
         def predict_entities(self): pass
 
     monkeypatch.setattr(
-        utility.GLiNER,
+        gliner_backend.GLiNER,
         "from_pretrained",
         lambda *a, **k: DummyModel(),
     )
 
     monkeypatch.setattr(
-        utility, "_verify_onnx_provider", lambda m: "CPUExecutionProvider"
+        gliner_backend, "_verify_onnx_provider", lambda m: "CPUExecutionProvider"
     )
 
     model = utility.get_gliner_model()
@@ -197,21 +202,22 @@ def test_get_gliner_model_no_onnxruntime(monkeypatch):
 # --- ONNX failure fallback to transformer ---
 def test_get_gliner_model_fallback_to_transformer(monkeypatch):
     utility.get_gliner_model.cache_clear()
+    gliner_backend.get_gliner_model.cache_clear()
 
     monkeypatch.setattr(
-        utility.rt,
+        gliner_backend.rt,
         "get_available_providers",
         lambda: ["CPUExecutionProvider"],
     )
 
     monkeypatch.setattr(
-        utility, "snapshot_download", lambda **k: "/tmp/model"
+        gliner_backend, "snapshot_download", lambda **k: "/tmp/model"
     )
 
     def raise_error(*a, **k):
         raise RuntimeError("ONNX load failed")
 
-    monkeypatch.setattr(utility.GLiNER, "from_pretrained", raise_error)
+    monkeypatch.setattr(gliner_backend.GLiNER, "from_pretrained", raise_error)
 
     class FallbackModel:
         def predict_entities(self): pass
@@ -222,7 +228,7 @@ def test_get_gliner_model_fallback_to_transformer(monkeypatch):
         return FallbackModel()
 
     monkeypatch.setattr(
-        utility.GLiNER,
+        gliner_backend.GLiNER,
         "from_pretrained",
         lambda *a, **k: raise_error() if "onnx" in str(a) else fallback_loader(a[0]),
     )
