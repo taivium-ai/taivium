@@ -1059,9 +1059,23 @@ def reverse_transform(text: str, mapping: Dict[str, Dict[str, Any]]) -> str:
     when one token is a prefix of another (unlikely given SHA-256 IDs, but safe).
     """
     start = time.perf_counter()
-    result = text
+    # Pre-validate mapping first so failures are all-or-nothing and never
+    # produce a partially de-anonymized mixed output.
+    replacements: List[Tuple[str, str]] = []
     for eid in sorted(mapping, key=len, reverse=True):
-        result = result.replace(eid, mapping[eid]["text"])
+        metadata = mapping[eid]
+        if not isinstance(metadata, dict):
+            raise ValueError(f"Invalid mapping entry for {eid}: expected dict metadata")
+        if "text" not in metadata:
+            raise ValueError(f"Invalid mapping entry for {eid}: missing 'text'")
+        replacement_text = metadata["text"]
+        if not isinstance(replacement_text, str):
+            raise ValueError(f"Invalid mapping entry for {eid}: 'text' must be str")
+        replacements.append((eid, replacement_text))
+
+    result = text
+    for eid, replacement_text in replacements:
+        result = result.replace(eid, replacement_text)
     log_audit_event(
         operation="reverse_transform",
         session_id="",
@@ -1259,7 +1273,7 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         """
         start = time.perf_counter()
 
-        logger.info("Processing text: %.60r", text[:60])
+        logger.info("Processing text payload redacted (len=%d)", len(text))
         # Step 1: collect raw detector evidence.
         evidence = collect_evidence(
             text,

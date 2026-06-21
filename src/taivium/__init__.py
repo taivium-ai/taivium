@@ -11,7 +11,7 @@ Quickstart::
     client = PrivacyClient(api_key="sk-...")
     response = client.chat.completions.create(
         model="gpt-4o",
-        messages=[{"role": "user", "content": "Alice at alice@acme.com needs help."}],
+        messages=[{"role": "user", "content": "A customer at user@acme.com needs help."}],
     )
 
 For custom policies::

@@ -12,7 +12,7 @@ Typical usage::
 
     response = client.chat.completions.create(
         model="gpt-4o",
-        messages=[{"role": "user", "content": "Alice at alice@acme.com needs help."}],
+        messages=[{"role": "user", "content": "A customer at user@acme.com needs help."}],
     )
     # Message was anonymised before leaving this process.
     # Original entity values are preserved in client.session_mapping.

@@ -16,7 +16,7 @@ Usage::
     store = RedisSessionStore(session_id="user-abc123")
     pipeline = Taivium(session_store=store)
 
-    result = pipeline.process("Alice at alice@acme.com needs help.")
+    result = pipeline.process("A customer at user@acme.com needs help.")
     # mapping is persisted in Redis under key taivium:default:session:user-abc123:*
 """
 
