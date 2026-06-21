@@ -63,11 +63,12 @@ PYTHONPATH=src pytest tests/
 
 1. Collect detector evidence via adaptive routing:
   - Fast track (`len(text) < 100`): `regex_evidence` (includes structured field detection) + `spacy_evidence`
-  - Context track (`len(text) >= 100`): `regex_evidence` (includes structured field detection) + `gliner_evidence`
+  - Context track (`len(text) >= 100`): `regex_evidence` (includes structured field detection) + selected context backend
+    (`gliner_evidence` or OpenAI privacy filter)
     - `gliner_evidence` chunks inputs over 384 tokens with overlap and processes
       chunks in batches before offset remapping/deduplication
   - Optional layers: `org_list_evidence`, `transformer_evidence`, `llm_evidence`
-2. Canonicalize spans (`canonicalize_spans`) — sweep-line overlap-cluster grouping produces one canonical entity per non-overlapping cluster via weighted label vote and longest-span selection
+2. Canonicalize spans (`canonicalize_spans`) — weighted interval scheduling over exact span+label candidates selects the best global non-overlapping set; includes a guard that penalizes PERSON/ORG/LOCATION fragment spans inside regex-validated EMAIL spans
 2b. Find semantic recurrences (`find_recurrences`) — add repeated surface-form mentions of canonical entities missed by NER for recurrence-eligible entities only (token-boundary safe, non-overlapping; avoids ambiguous short PERSON/LOCATION/acronym cloning)
 3. Resolve deterministic IDs (`IdentityEngine.resolve`) with privacy-preserving options:
   - `id_salt`: Optional salt to scope entity IDs to a tenant, session, or namespace
@@ -159,10 +160,17 @@ pipeline = Taivium()
 # Configure a different installed spaCy model
 pipeline = Taivium(spacy_model_name="en_core_web_lg")
 
+# Configure long-text context backend (short-text route remains spaCy)
+pipeline = Taivium(context_ner_backend="gliner")
+pipeline = Taivium(context_ner_backend="openai-privacy-filter")
+
 # Also configurable in module_engine_process options
 result = module_engine_process(
   "Alice Johnson from Acme Corp",
-  options={"spacy_model_name": "en_core_web_lg"},
+  options={
+    "spacy_model_name": "en_core_web_lg",
+    "context_ner_backend": "gliner",
+  },
 )
 ```
 

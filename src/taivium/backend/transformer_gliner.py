@@ -11,8 +11,8 @@ import warnings
 import os
 
 from transformers.utils import logging as hf_logging
-from .utility import get_gliner_model
-from .defs import Evidence, normalize_label
+from ..utility import get_gliner_model
+from ..defs import Evidence, normalize_label
 
 def suppress_gliner_warnings_veified_by_tests():
     """Suppress specific warnings from transformers and ONNX Runtime during GLiNER loading."""
@@ -21,7 +21,7 @@ def suppress_gliner_warnings_veified_by_tests():
     hf_logging.set_verbosity_error()
 suppress_gliner_warnings_veified_by_tests()
 
-logger = logging.getLogger("taivium.engine")
+logger = logging.getLogger("taivium.backend.gliner")
 
 # GLiNER inference configuration constants
 _GLINER_MAX_TOKENS = 384

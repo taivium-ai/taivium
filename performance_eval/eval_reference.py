@@ -6,43 +6,34 @@ import logging
 import os
 import pickle
 import time
+from typing import Optional
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
-from functools import lru_cache
 from pathlib import Path
-from presidio_analyzer import AnalyzerEngine
 from taivium import Taivium
-from taivium.engine import normalize_label, get_spacy_model
-from presidio_analyzer.nlp_engine import SpacyNlpEngine
+from taivium.engine import (
+    _resolve_context_ner_backend,
+)
 from tqdm import tqdm
 from .utility import compute_prf, cache_file_from_payload, get_git_commit_hash
 
 logger = logging.getLogger(__name__)
 
-# Module-level cache for Taivium engines (keyed by spaCy model)
+# Module-level cache for Taivium engines (keyed by short_text_backend, long_text_backend)
 _taivium_engines = {}
-# Module-level cache for Presidio AnalyzerEngine
-_presidio_engine = None
-
-# Mapping from Presidio entity types to project label schema
-_PRESIDIO_LABEL_MAP = {
-    "PERSON": "PERSON",
-    "ORGANIZATION": "ORG",
-    "LOCATION": "LOCATION",
-    "EMAIL_ADDRESS": "EMAIL",
-    "PHONE_NUMBER": "PHONE",
-    "DATE_TIME": "DATE",
-    "IP_ADDRESS": "IP",
-    "US_SSN": "SOCIALNUMBER",
-    "USERNAME": "USERNAME",
-    "CREDIT_CARD": "SOCIALNUMBER",
-    "CRYPTO": "SOCIALNUMBER",
-}
 
 
 def _evaluate_single_sample(task):
     """Worker task for multiprocessing evaluation."""
-    idx, text, comparable_gold, detection_name, allowed_labels, model_name, use_gliner = task
+    (
+        idx,
+        text,
+        comparable_gold,
+        detection_name,
+        allowed_labels,
+        short_text_backend,
+        long_text_backend,
+    ) = task
     detection_fn = globals().get(detection_name)
     if detection_fn is None:
         raise ValueError(f"Unknown detection function: {detection_name}")
@@ -50,8 +41,8 @@ def _evaluate_single_sample(task):
     pred_spans = detection_fn(
         text,
         allowed_labels,
-        model_name=model_name,
-        use_gliner=use_gliner,
+        short_text_backend=short_text_backend,
+        long_text_backend=long_text_backend,
     )
     fp_set = pred_spans - comparable_gold
     fn_set = comparable_gold - pred_spans
@@ -73,19 +64,24 @@ def _evaluate_single_sample(task):
         mp.current_process().name,
     )
 
-def taivium_detection(text, allowed_labels, model_name="en_core_web_sm", use_gliner=True):
+def taivium_detection(
+    text,
+    allowed_labels,
+    short_text_backend="en_core_web_sm",
+    long_text_backend=None,
+):
     '''Detect entities in text using Taivium. Returns a set of (start, end, label) spans.'''
     # Load engine per model/config once, reuse on subsequent calls.
-    # use_gliner materially changes detector behavior, so include it in the key.
-    engine_key = (model_name, bool(use_gliner))
+    backend = _resolve_context_ner_backend(long_text_backend, None)
+    engine_key = (short_text_backend, backend)
     if engine_key not in _taivium_engines:
         print(
-            "Loading Taivium engine for evaluation with "
-            f"spaCy model: {model_name}, use_gliner={use_gliner}"
+            "Loading Taivium engine for evaluation: "
+            f"short-text=spaCy({short_text_backend}), long-text={backend}"
         )
         _taivium_engines[engine_key] = Taivium(
-            spacy_model_name=model_name,
-            use_gliner=use_gliner,
+            spacy_model_name=short_text_backend,
+            context_ner_backend=backend,
         )
     engine = _taivium_engines[engine_key]
     result = engine.process(text)
@@ -95,67 +91,12 @@ def taivium_detection(text, allowed_labels, model_name="en_core_web_sm", use_gli
             pred_spans.add((ent["start"], ent["end"], ent["label"]))
     return pred_spans
 
-def spacy_detection(text, allowed_labels, model_name="en_core_web_lg"):
-    '''Detect entities in text using spaCy NER model. Returns a set of (start, end, label) spans.'''
-    nlp = get_spacy_model(model_name)
-    
-    pred_doc = nlp(text)
-    pred_spans = set()
-    for ent in pred_doc.ents:
-        normalized = normalize_label(ent.label_)
-        if normalized in allowed_labels:
-            pred_spans.add((ent.start_char, ent.end_char, normalized))
-    return pred_spans
-
-@lru_cache(maxsize=8)
-def get_optimized_presidio_engine(model_name: str = "en_core_web_lg") -> AnalyzerEngine:
-    """
-    Creates a thread-safe, cached Presidio Analyzer instance operating 
-    on a stripped-down, high-performance spaCy pipeline.
-    """
-    # 1. Load spaCy explicitly with heavy, unused sub-components disabled
-    # (Just like you did in your native spaCy wrapper)
-    nlp = get_spacy_model(model_name)
-    
-    # 2. Configure Presidio's underlying SpacyNlpEngine configuration manually
-    # We pass the pre-loaded, stripped nlp instance as a pre-warmed model map
-    nlp_engine = SpacyNlpEngine(models=[{"lang_code": "en", "model_name": model_name}])
-    nlp_engine.nlp = {"en": nlp}
-    
-    # 3. Supply the optimized engine configuration directly into the AnalyzerEngine
-    return AnalyzerEngine(nlp_engine=nlp_engine)
-
-
-def presidio_detection(text, allowed_labels, model_name="en_core_web_lg"):
-    """
-    Detect entities in text using Microsoft Presidio AnalyzerEngine.
-    Returns a set of (start, end, label) spans.
-    """
-    # Retrieve our highly optimized and cached instance instantly
-    engine = get_optimized_presidio_engine(model_name)
-
-    # Request only Presidio types that map to our allowed labels
-    presidio_entities = [
-        presidio_type
-        for presidio_type, project_label in _PRESIDIO_LABEL_MAP.items()
-        if project_label in allowed_labels
-    ]
-    
-    results = engine.analyze(text=text, entities=presidio_entities, language="en")
-
-    pred_spans = set()
-    for result in results:
-        label = _PRESIDIO_LABEL_MAP.get(result.entity_type)
-        if label and label in allowed_labels:
-            pred_spans.add((result.start, result.end, label))
-            
-    return pred_spans
-
-
 
 def evaluation(detection, dataset, comparable_golds, allowed_labels,
-                     max_errors, model_name="en_core_web_lg", use_gliner=True,
+                     max_errors, short_text_backend="en_core_web_lg",
+                     long_text_backend=None,
                      shared_cache_name=None,
+                     use_cache=True,
                      workers=None, chunksize=64, show_worker_progress=False):
     '''Evaluate NER performance on the dataset. 
     Returns TP, FP, FN counts and error samples.'''
@@ -174,14 +115,15 @@ def evaluation(detection, dataset, comparable_golds, allowed_labels,
     )
     cache_dir = Path(__file__).parent / ".cache"
     cache_dir.mkdir(exist_ok=True)
-    safe_model_name = str(model_name).replace("/", "_")
+    safe_model_name = str(short_text_backend).replace("/", "_")
     variant = ""
     if detection.__name__ == "taivium_detection":
-        variant = f"__gliner_{'on' if use_gliner else 'off'}"
+        backend = _resolve_context_ner_backend(long_text_backend, None)
+        variant = f"__backend_{backend}"
     cache_file = cache_dir / f"{run_cache_name}__{detection.__name__}__{safe_model_name}{variant}.pkl"
 
     # Check if cache exists
-    if cache_file.exists():
+    if use_cache and cache_file.exists():
         logger.warning("Loading evaluation from cache: %s", cache_file)
         with open(cache_file, 'rb') as f:
             cached = pickle.load(f)
@@ -203,7 +145,15 @@ def evaluation(detection, dataset, comparable_golds, allowed_labels,
     # Multiprocessing gives substantial speedup on large datasets.
     if max_workers > 1 and n_samples > 1:
         tasks = [
-            (idx, text, comparable_gold, detection.__name__, allowed_labels, model_name, use_gliner)
+            (
+                idx,
+                text,
+                comparable_gold,
+                detection.__name__,
+                allowed_labels,
+                short_text_backend,
+                long_text_backend,
+            )
             for idx, (text, comparable_gold) in enumerate(comparable_golds)
         ]
         overall_bar = None
@@ -252,7 +202,8 @@ def evaluation(detection, dataset, comparable_golds, allowed_labels,
 
         for idx, (text, comparable_gold) in iter_rows:
             pred_spans = detection(text, allowed_labels, 
-                                   model_name=model_name, use_gliner=use_gliner)
+                                   short_text_backend=short_text_backend,
+                                   long_text_backend=long_text_backend)
             fp_set = pred_spans - comparable_gold
             fn_set = comparable_gold - pred_spans
             tp += len(pred_spans & comparable_gold)
@@ -274,8 +225,9 @@ def evaluation(detection, dataset, comparable_golds, allowed_labels,
     total_time = time.perf_counter() - t_start
 
     # Save to pickle cache
-    logger.warning("Saving spaCy evaluation to cache: %s", cache_file)
-    with open(cache_file, 'wb') as f:
-        pickle.dump((metrics, errors, total_time, n_samples), f)
+    if use_cache:
+        logger.warning("Saving evaluation to cache: %s", cache_file)
+        with open(cache_file, 'wb') as f:
+            pickle.dump((metrics, errors, total_time, n_samples), f)
 
     return metrics, errors, cache_file, total_time, n_samples

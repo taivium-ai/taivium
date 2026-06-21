@@ -244,7 +244,7 @@ def load_cached_dataset(ds_name: str, allowed_labels, split_name: str = "train")
             raise ValueError(f"Unsupported dataset source: {ds_name}")
 
     if split_name not in ds:
-        available_splits = ", ".join(sorted(ds.keys()))
+        available_splits = ", ".join(sorted(str(key) for key in ds.keys()))
         raise ValueError(
             f"Dataset '{ds_name}' does not contain split '{split_name}'. "
             f"Available splits: {available_splits}"

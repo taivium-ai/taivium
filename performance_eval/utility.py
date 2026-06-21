@@ -96,7 +96,21 @@ def get_performance_trend_plot_path(module_file: str, dataset: str, profile: str
 
 def _model_run_label(settings_entry: dict) -> str:
     """Build canonical model label for trend tracking."""
-    return f"{settings_entry['detection_func'].__name__} ({settings_entry['spacy_model_name']})"
+    backend = settings_entry.get("long_text_backend")
+    if backend is None:
+        backend = settings_entry.get("detector_backend")
+
+    short_text_backend = (
+        settings_entry.get("short_text_backend")
+        or settings_entry.get("spacy_model_name")
+        or settings_entry.get("model_name")
+        or "unknown"
+    )
+    detection_fn = settings_entry.get("detection_func")
+    detector_name = detection_fn.__name__ if callable(detection_fn) else "unknown_detection"
+
+    suffix = f", context_ner={backend}" if backend else ""
+    return f"{detector_name} ({short_text_backend}{suffix})"
 
 
 def update_performance_history(module_file: str,
@@ -447,10 +461,9 @@ def get_delta_matrix_tables(settings_results):
     Returns a dictionary with matrices data.
     """
     n = len(settings_results)
-    short_names = [f"{s['detection_func'].__name__} ({s['spacy_model_name']})" 
-                   for s in settings_results]
+    short_names = [_model_run_label(s) for s in settings_results]
     full_names = [
-        f"{s['detection_func'].__name__} ({s['spacy_model_name']}) [{s.get('run_cache_name') or (s['cache_file'].stem if 'cache_file' in s and s['cache_file'] else 'no-cache')}]"
+        f"{_model_run_label(s)} [{s.get('run_cache_name') or (s['cache_file'].stem if 'cache_file' in s and s['cache_file'] else 'no-cache')}]"
         for s in settings_results
     ]
 
@@ -718,7 +731,7 @@ def print_timing_summary(settings_results):
     print(f"  {'Model':<45} {'Total (s)':>10} {'Avg (ms/sample)':>17}")
     print(f"  {'-'*45} {'-'*10} {'-'*17}")
     for s in settings_results:
-        label = f"{s['detection_func'].__name__} ({s['spacy_model_name']})"
+        label = _model_run_label(s)
         t = s.get("total_time")
         n = s.get("n_samples")
         if t is not None and n:

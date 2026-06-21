@@ -1,5 +1,9 @@
-'''Main evaluation script for running entity detection evaluations on specified datasets and label profiles.
-This script loads the specified dataset and label profile, runs evaluations using both spaCy and Taivium, and saves the results and error samples. It also computes and prints delta matrices comparing the models'''
+'''Main evaluation script for entity detection benchmarks.
+
+This script loads the selected dataset and label profile, runs Taivium
+evaluations with long-text context backends (gliner, openai-privacy-filter),
+saves metrics and error samples, and computes delta matrices.
+'''
 import argparse
 import datetime as dt
 import importlib
@@ -36,6 +40,8 @@ def _assert_local_taivium_import() -> None:
 
 _assert_local_taivium_import()
 
+# Imports intentionally come after sys.path bootstrapping above.
+# pylint: disable=wrong-import-position
 from performance_eval.utility import print_delta_matrix_tables, \
                                     save_evaluation_results, save_delta_matrices, \
                                     plot_label_distribution, print_timing_summary, \
@@ -50,9 +56,23 @@ from performance_eval.utility import print_delta_matrix_tables, \
 load_dotenv(Path(PROJECT_ROOT) / ".env")
 from performance_eval.eval_datasets import DATASET_LIST, load_cached_dataset, LABEL_PROFILES
 from performance_eval.eval_reference import taivium_detection, evaluation
-from performance_eval.generate_report_html import generate_html
+
+_BACKEND_ALIASES = {
+    "openai": "openai-privacy-filter",
+    "openai_privacy_filter": "openai-privacy-filter",
+    "openai-privacy-filter": "openai-privacy-filter",
+}
 
 
+def _resolve_backend_from_settings(result: dict) -> str | None:
+    """Resolve long-text backend label from settings."""
+    backend = result.get("long_text_backend")
+    if backend is not None:
+        return str(backend)
+    return None
+
+
+# pylint: disable-next=too-many-locals
 def _save_latest_report_json(
     project_root: Path,
     dataset: str,
@@ -68,16 +88,16 @@ def _save_latest_report_json(
     results_dir.mkdir(parents=True, exist_ok=True)
     latest_report_path = results_dir / "latest_report.json"
 
-    models: dict[str, dict[str, float | None]] = {}
+    models: dict[str, dict[str, float | str | None]] = {}
     for result in settings_results:
         detection_func = result.get("detection_func")
         detector = detection_func.__name__ if callable(detection_func) else "unknown_detection"
-        model = result.get("spacy_model_name", "unknown")
-        use_gliner = result.get("use_gliner")
+        short_text_backend = result.get("short_text_backend", "unknown")
+        backend = _resolve_backend_from_settings(result)
         route_suffix = ""
-        if use_gliner is not None:
-            route_suffix = f", gliner={'on' if use_gliner else 'off'}"
-        label = f"{detector} ({model}{route_suffix})"
+        if backend is not None:
+            route_suffix = f", context_ner={backend}"
+        label = f"{detector} ({short_text_backend}{route_suffix})"
         metrics = result.get("metrics", {})
         total_time = result.get("total_time")
         n_samples = result.get("n_samples")
@@ -91,7 +111,7 @@ def _save_latest_report_json(
             "recall": float(metrics.get("recall", 0.0)),
             "f1": float(metrics.get("f1", 0.0)),
             "timing_ms": timing_ms,
-            "use_gliner": use_gliner,
+            "long_text_backend": backend,
         }
 
     report_payload = {
@@ -112,7 +132,8 @@ def _save_latest_report_json(
     return latest_report_path
 
 
-def main() -> None:
+def main() -> None:  # pylint: disable=too-many-locals,too-many-statements
+    """Parse CLI args, run evaluation backends, and persist reports/artifacts."""
     configure_logging_from_env()
 
     parser = argparse.ArgumentParser(
@@ -154,20 +175,46 @@ def main() -> None:
         help="Disable performance history updates and trend chart generation.",
     )
     parser.add_argument(
-        "--skip-baselines",
+        "--context-ner-backends",
+        default="gliner,openai-privacy-filter",
+        help=(
+            "Comma-separated backends for Taivium long-text route "
+            "(for example: gliner,openai-privacy-filter). "
+            "Short-text detection always uses spaCy."
+        ),
+    )
+    parser.add_argument(
+        "--short-test-run",
         action="store_true",
-        default=False,
-        help="Skip spaCy and Presidio evaluation; reuse cached results from previous run.",
+        help=(
+            "Run a short smoke evaluation without saving reports, plots, "
+            "history, or cache results."
+        ),
+    )
+    parser.add_argument(
+        "--short-test-samples",
+        type=int,
+        default=50,
+        help="Number of samples to use with --short-test-run (default: 50).",
     )
 
     args, _ = parser.parse_known_args()
 
     allowed_labels = LABEL_PROFILES[args.profile]
+    dataset_source = DATASET_LIST[args.dataset]["source"]
     print(f"Evaluating on dataset '{args.dataset}' with label profile '{args.profile}' \
           (allowed labels: {', '.join(sorted(allowed_labels))})")
+    print(f"Dataset used: {args.dataset} (source: {dataset_source})")
     print(f"Using worker processes: {args.workers}")
 
     dataset, comparable_golds = load_cached_dataset(args.dataset, allowed_labels)
+    if args.short_test_run:
+        sample_limit = max(1, int(args.short_test_samples))
+        comparable_golds = comparable_golds[:sample_limit]
+        print(
+            "Short test run enabled: using "
+            f"{len(comparable_golds)} samples and skipping saved artifacts."
+        )
 
     shared_cache_payload = {
         "dataset": args.dataset,
@@ -180,71 +227,55 @@ def main() -> None:
     print(f"Shared run cache key: {run_cache_name}")
 
     # Plot and save label distribution for the evaluation split
-    _dist_path = get_label_distribution_path(__file__, args.dataset, args.profile)
-    plot_label_distribution(comparable_golds, args.dataset, args.profile, _dist_path)
-    print(f"Label distribution saved to: {_dist_path}")
+    if not args.short_test_run:
+        _dist_path = get_label_distribution_path(__file__, args.dataset, args.profile)
+        plot_label_distribution(comparable_golds, args.dataset, args.profile, _dist_path)
+        print(f"Label distribution saved to: {_dist_path}")
+
+    backend_options = [
+        _BACKEND_ALIASES.get(item.strip().lower(), item.strip().lower())
+        for item in str(args.context_ner_backends).split(",")
+        if item.strip()
+    ]
+    supported_backends = {"gliner", "openai-privacy-filter"}
+    invalid_backends = [opt for opt in backend_options if opt not in supported_backends]
+    if invalid_backends:
+        raise ValueError(
+            "Unsupported --context-ner-backends values: "
+            f"{invalid_backends}. Supported values: {sorted(supported_backends)}"
+        )
+    if not backend_options:
+        raise ValueError("--context-ner-backends must include at least one backend")
 
     settings_results = [
-        {"metrics": {}, "detection_func": taivium_detection, "spacy_model_name": "en_core_web_sm", "use_gliner": True},
-        {"metrics": {}, "detection_func": taivium_detection, "spacy_model_name": "en_core_web_sm", "use_gliner": False},
+        {
+            "metrics": {},
+            "detection_func": taivium_detection,
+            "short_text_backend": "en_core_web_sm",
+            "long_text_backend": backend,
+        }
+        for backend in backend_options
     ]
 
     # Determine which detections to run
     detections_to_run = settings_results
-    if args.skip_baselines:
-        print("\n[--skip-baselines] Loading cached Presidio and Taivium(sm) results...")
-        cache_dir = Path(__file__).parent / ".cache"
 
-        # Load cached metrics for the first two configured models.
-        baseline_targets = [
-            (0, "presidio_detection", "en_core_web_lg"),
-            (1, "taivium_detection", "en_core_web_sm"),
-        ]
-        for i, detection_name, model_name in baseline_targets:
-            pattern = f"*{detection_name}*{model_name.replace('/', '_')}*_{detection_name}_report.json"
-            matches = list(cache_dir.glob(pattern))
-            if not matches:
-                # Fallback if model-specific naming differs.
-                matches = list(cache_dir.glob(f"*{detection_name}*_report.json"))
-            if matches:
-                # Sort by modification time and use newest
-                matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-                report_file = matches[0]
-                try:
-                    with open(report_file, "r", encoding="utf-8") as f:
-                        report = json.load(f)
-                    metrics = report.get("metrics", {})
-                    settings_results[i]["metrics"] = metrics
-                    settings_results[i]["cache_file"] = report_file
-                    settings_results[i]["total_time"] = 0  # Cached, no actual runtime
-                    settings_results[i]["n_samples"] = 0
-                    precision = metrics.get("precision", "N/A")
-                    recall = metrics.get("recall", "N/A")
-                    if isinstance(precision, (int, float)):
-                        precision = f"{precision:.3f}"
-                    if isinstance(recall, (int, float)):
-                        recall = f"{recall:.3f}"
-                    print(f"  ✓ Loaded cached {detection_name}: P={precision}, R={recall}")
-                except (OSError, json.JSONDecodeError) as e:
-                    print(f"  ⚠ Could not load cached results for {detection_name}: {e}")
-            else:
-                print(f"  ⚠ No cached results found for {detection_name}")
-    
     for _, detection_settings_result in tqdm.tqdm(
         enumerate(detections_to_run), total=len(detections_to_run)
     ):
         detection = detection_settings_result["detection_func"]
-        model_name = detection_settings_result["spacy_model_name"]
-        use_gliner = detection_settings_result.get("use_gliner", True)
+        short_text_backend = detection_settings_result["short_text_backend"]
+        long_text_backend = detection_settings_result.get("long_text_backend")
         metrics, errors, cache_file, total_time, n_samples = evaluation(
             detection,
             dataset,
             comparable_golds,
             allowed_labels,
             args.max_errors,
-            model_name=model_name,
-            use_gliner=use_gliner,
+            short_text_backend=short_text_backend,
+            long_text_backend=long_text_backend,
             shared_cache_name=run_cache_name,
+            use_cache=not args.short_test_run,
             workers=args.workers,
             show_worker_progress=not args.no_worker_progress,
         )
@@ -259,16 +290,17 @@ def main() -> None:
         print("Recall:", metrics["recall"])
 
         # Save evaluation results (reports, metrics, errors)
-        save_evaluation_results(
-            cache_file,
-            detection.__name__,
-            args.dataset,
-            args.profile,
-            allowed_labels,
-            model_name,
-            metrics,
-            errors,
-        )
+        if not args.short_test_run:
+            save_evaluation_results(
+                cache_file,
+                detection.__name__,
+                args.dataset,
+                args.profile,
+                allowed_labels,
+                short_text_backend,
+                metrics,
+                errors,
+            )
 
     # Print delta matrices
     print_delta_matrix_tables(settings_results)
@@ -276,16 +308,19 @@ def main() -> None:
     # Print timing summary
     print_timing_summary(settings_results)
 
-    latest_report_path = _save_latest_report_json(
-        Path(PROJECT_ROOT),
-        args.dataset,
-        args.profile,
-        shared_cache_payload["commit_hash"],
-        settings_results,
-    )
-    print(f"Latest report saved: {latest_report_path}")
+    if not args.short_test_run:
+        latest_report_path = _save_latest_report_json(
+            Path(PROJECT_ROOT),
+            args.dataset,
+            args.profile,
+            shared_cache_payload["commit_hash"],
+            settings_results,
+        )
+        print(f"Latest report saved: {latest_report_path}")
 
-    if args.no_trend:
+    if args.short_test_run:
+        print("Performance trend recording skipped in short test run")
+    elif args.no_trend:
         print("Performance trend recording disabled via --no-trend")
     else:
         # Update persistent history and print trend deltas vs previous run.
@@ -301,23 +336,12 @@ def main() -> None:
 
 
     # Save delta matrices to JSON and text formats
-    if settings_results:
+    if settings_results and not args.short_test_run:
         first_cache_file = settings_results[0]["cache_file"]
         delta_json_path, delta_txt_path = save_delta_matrices(first_cache_file, settings_results)
         print(f"\nDelta matrices saved to: {delta_json_path}")
         print(f"Delta matrices saved to: {delta_txt_path}")
 
-    # Generate HTML report
-    print("\nGenerating HTML report...")
-    try:
-        cache_dir = Path(__file__).parent / ".cache"
-        output_file = Path(__file__).parent.parent / "web" / "index.html"
-        generate_html(cache_dir, output_file)
-        print("HTML report generated successfully at: web/index.html")
-    except (FileNotFoundError, ValueError, OSError) as e:
-        print(f"Warning: Failed to generate HTML report: {e}")
-
 
 if __name__ == "__main__":
     main()
-

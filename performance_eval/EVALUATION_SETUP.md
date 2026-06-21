@@ -18,17 +18,26 @@
 
 ## Running Evaluations
 
-### Full Evaluation (all detectors)
+### Full Evaluation (all backends)
 ```bash
 python3 performance_eval/main_evaluation.py
 ```
-Runtime: ~10-15 minutes
+Runtime: ~10-15 minutes (tests gliner and openai-privacy-filter backends for long-text detection)
 
-### Fast Iteration (Taivium only, cached baselines)
+### Custom Backend Selection
+```bash
+python3 performance_eval/main_evaluation.py --context-ner-backends gliner
+# or
+python3 performance_eval/main_evaluation.py --context-ner-backends openai-privacy-filter
+# or both:
+python3 performance_eval/main_evaluation.py --context-ner-backends gliner,openai-privacy-filter
+```
+
+### Cached Evaluation (reuse previous results)
 ```bash
 python3 performance_eval/main_evaluation.py --skip-baselines
 ```
-Runtime: ~2-3 minutes
+Runtime: ~2-3 minutes (skips Taivium evaluation, loads cached results from previous runs)
 
 ### View Performance Report
 Open: `web/index.html`
@@ -40,11 +49,15 @@ Open: `web/index.html`
 - **Trend Chart:** `performance_eval/.cache/*_performance_trend.png` (generated with matplotlib)
 
 ## Detectors Evaluated
-1. **SpaCy** (en_core_web_lg) - NER baseline
-2. **Presidio** (default config) - Reference implementation
-3. **Taivium** (en_core_web_lg) - Custom privacy detection engine
+Taivium adaptive privacy detection engine with configurable long-text backends:
+1. **Short-text route** (text < 100 chars): Regex + spaCy NER (fixed)
+2. **Long-text route** (text >= 100 chars): Regex + context backend (configurable)
+
+### Available Backends for Long-Text Detection
+- **gliner** (default) - GLiNER-based contextual NER
+- **openai-privacy-filter** - OpenAI API-based LLM privacy detection
 
 ## Notes
-- Pickle files (`.pkl`) are excluded from Git (see `.gitignore`)
-- HTML reports and performance history JSON are committed for trend tracking
+- JSON report files and performance history are committed for trend tracking
 - Each run appends a new entry to the history JSON with full metadata
+- Cache files (`.cache/`) persist results across runs for fast iteration with `--skip-baselines`

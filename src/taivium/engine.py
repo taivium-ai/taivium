@@ -22,7 +22,8 @@ from typing import Any, Callable, cast, Dict, List, Optional, Tuple
 import os
 
 from .transformer import transformer_evidence
-from .transformer_gliner import gliner_evidence
+from .backend.transformer_gliner import gliner_evidence
+from .backend.transformer_openai_privacy_filter import openai_privacy_filter_evidence
 from .session_store import InMemorySessionStore, SessionStore, RedisSessionStore
 from .llm import llm_evidence
 from .audit_logger import log_audit_event
@@ -98,6 +99,12 @@ RECURRENCE_ALLOWED = {
 
 
 DEFAULT_SHORT_TEXT_THRESHOLD = 100
+_SUPPORTED_CONTEXT_NER_BACKENDS = {"gliner", "openai-privacy-filter"}
+_BACKEND_ALIASES = {
+    "openai": "openai-privacy-filter",
+    "openai_privacy_filter": "openai-privacy-filter",
+    "openai-privacy-filter": "openai-privacy-filter",
+}
 
 
 def _is_likely_structured_payload(text: str) -> bool:
@@ -183,6 +190,85 @@ def _normalize_gliner_threshold(gliner_threshold: Optional[float]) -> Optional[f
     return value
 
 
+def _resolve_context_ner_backend(
+    context_ner_backend: Optional[str],
+    use_gliner: Optional[bool],
+) -> str:
+    """Resolve long-text context backend with backward-compatible aliases.
+
+    Preferred API uses ``context_ner_backend`` with values:
+    - ``gliner``
+    - ``openai-privacy-filter``
+
+    Legacy mapping:
+    - ``use_gliner=True`` -> ``gliner``
+    - ``use_gliner=False`` -> ``openai-privacy-filter``
+    """
+    if context_ner_backend is not None:
+        backend = str(context_ner_backend).strip().lower()
+        backend = _BACKEND_ALIASES.get(backend, backend)
+        if backend not in _SUPPORTED_CONTEXT_NER_BACKENDS:
+            raise ValueError(
+                "Unsupported context_ner_backend="
+                f"'{context_ner_backend}'. Supported values: "
+                f"{sorted(_SUPPORTED_CONTEXT_NER_BACKENDS)}"
+            )
+        return backend
+
+    if use_gliner is None:
+        return "gliner"
+    return "gliner" if bool(use_gliner) else "openai-privacy-filter"
+
+
+def get_context_ner_backend_detector(
+    backend_name: str,
+    gliner_threshold: Optional[float] = None,
+    llm_fn: Optional[Callable[[str], List[Evidence]]] = None,
+) -> Callable[[str], List[Evidence]]:
+    """Load and return the detection function for the specified context NER backend.
+
+    This factory function instantiates backend-specific configurations and returns
+    a callable that takes text and returns a list of Evidence records.
+
+    Args:
+        backend_name: The backend identifier ('gliner' or 'openai-privacy-filter').
+        gliner_threshold: Optional GLiNER confidence threshold in [0.0, 1.0].
+            Only used for the 'gliner' backend.
+        llm_fn: Optional custom LLM detector callable. If provided, replaces the
+            built-in OpenAI LLM detector for 'openai-privacy-filter' backend.
+
+    Returns:
+        A callable with signature Callable[[str], List[Evidence]] that detects
+        entities in the given text using the specified backend.
+
+    Raises:
+        ValueError: If backend_name is not supported.
+    """
+    backend = str(backend_name).strip().lower()
+
+    if backend == "gliner":
+        def gliner_detector(text: str) -> List[Evidence]:
+            """GLiNER-based context NER detector."""
+            return gliner_evidence(
+                text,
+                targets=["PERSON", "LOCATION", "ORGANIZATION"],
+                threshold=gliner_threshold,
+            )
+        return gliner_detector
+
+    elif backend == "openai-privacy-filter":
+        def openai_detector(text: str) -> List[Evidence]:
+            """OpenAI privacy-filter context NER detector."""
+            return openai_privacy_filter_evidence(text)
+        return openai_detector
+
+    else:
+        raise ValueError(
+            f"Unsupported context NER backend: '{backend_name}'. "
+            f"Supported backends: {sorted(_SUPPORTED_CONTEXT_NER_BACKENDS)}"
+        )
+
+
 def collect_evidence(  # pylint: disable=too-many-arguments
     text: str,
     *,
@@ -190,6 +276,7 @@ def collect_evidence(  # pylint: disable=too-many-arguments
     spacy_model_name: str = "en_core_web_sm",
     short_text_threshold: int = DEFAULT_SHORT_TEXT_THRESHOLD,
     use_gliner: bool = True,
+    context_ner_backend: Optional[str] = None,
     gliner_threshold: Optional[float] = None,
     use_transformer: bool = False,
     use_llm: bool = False,
@@ -198,14 +285,17 @@ def collect_evidence(  # pylint: disable=too-many-arguments
 ) -> List[Evidence]:
     """Collects raw evidence from an adaptive cascade and optional layers.
 
-    Adaptive routing:
-    - Fast track (``len(text) < short_text_threshold``): regex + spaCy.
-    - Context track (``len(text) >= short_text_threshold``): regex + GLiNER.
+        Adaptive routing:
+        - Fast track (``len(text) < short_text_threshold``): regex + spaCy.
+        - Context track (``len(text) >= short_text_threshold``):
+            regex + long-text context backend (GLiNER or OpenAI privacy filter).
 
     Detection order (for compliance-friendly auditing and deterministic behavior):
     1. known_orgs: Explicit organization list (if provided) - highest confidence
     2. regex: Pattern-based PII detection (always enabled)
-    3. Adaptive NER route: spaCy (short text) OR GLiNER (long text)
+     3. Adaptive NER route:
+         - short text: spaCy
+         - long text: GLiNER or OpenAI privacy filter
     4. transformer/LLM: Optional advanced detectors
 
     Args:
@@ -215,8 +305,12 @@ def collect_evidence(  # pylint: disable=too-many-arguments
         spacy_model_name: spaCy model package name for NER.
         short_text_threshold: Character threshold controlling adaptive routing.
             Inputs shorter than this value use the fast route (regex + spaCy),
-            while longer inputs use the context route (regex + GLiNER).
-        use_gliner: Whether to use GLiNER for context-aware NER on longer texts. Enabled by default.
+            while longer inputs use the context backend.
+        use_gliner: Backward-compatible toggle for long-text GLiNER routing.
+            When ``False``, maps to ``openai-privacy-filter``.
+        context_ner_backend: Long-text context backend selection.
+            Supported values: ``gliner`` and ``openai-privacy-filter``.
+            Defaults to ``gliner`` when not provided.
         gliner_threshold: Optional GLiNER confidence threshold in [0.0, 1.0].
             When None, GLiNER uses its own default resolution behavior.
         use_transformer: Master switch for the transformer detector layer. Must be
@@ -237,6 +331,7 @@ def collect_evidence(  # pylint: disable=too-many-arguments
         Aggregated evidence from enabled detector layers.
     """
     short_text_threshold = _normalize_short_text_threshold(short_text_threshold)
+    context_backend = _resolve_context_ner_backend(context_ner_backend, use_gliner)
     evidence = regex_evidence(text)
     structured_payload = _is_likely_structured_payload(text)
 
@@ -258,18 +353,18 @@ def collect_evidence(  # pylint: disable=too-many-arguments
         evidence += ner_evidence
     else:
         logger.debug(
-            "Adaptive detector route=context len=%s threshold=%s",
+            "Adaptive detector route=context len=%s threshold=%s backend=%s",
             len(text),
             short_text_threshold,
+            context_backend,
         )
-        if use_gliner:
-            ner_evidence = gliner_evidence(
-                text,
-                targets=["PERSON", "LOCATION", "ORGANIZATION"],
-                threshold=gliner_threshold,
-            )
-        else:
-            ner_evidence = spacy_evidence(text, model_name=spacy_model_name)
+        # Load the appropriate context NER backend detector
+        backend_detector = get_context_ner_backend_detector(
+            context_backend,
+            gliner_threshold=gliner_threshold,
+            llm_fn=llm_fn,
+        )
+        ner_evidence = backend_detector(text)
 
         if structured_payload:
             ner_evidence = _filter_structured_ner_noise(text, ner_evidence)
@@ -277,7 +372,7 @@ def collect_evidence(  # pylint: disable=too-many-arguments
 
     if use_transformer:
         evidence += (transformer_fn or transformer_evidence)(text)
-    if use_llm:
+    if use_llm and context_backend != "openai-privacy-filter":
         evidence += (llm_fn or llm_evidence)(text)
     return evidence
 
@@ -1069,6 +1164,11 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         model_name (str, optional):
             Backward-compatible alias for ``spacy_model_name``.
             If both are provided, ``model_name`` takes precedence.
+        context_ner_backend (str, optional):
+            Long-text context backend. Supported values are
+            ``"gliner"`` and ``"openai-privacy-filter"``.
+            Short-text routing always uses spaCy.
+            If not provided, defaults to ``"gliner"``.
 
     Usage Examples:
         # Default (global, legacy-stable IDs)
@@ -1091,6 +1191,7 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         policy_engine: Optional[PolicyEngine] = None,
         session_store: Optional[SessionStore] = None,
         use_gliner: bool = True,
+        context_ner_backend: Optional[str] = None,
         use_transformer: bool = False,
         use_llm: bool = False,
         transformer_fn: Optional[Callable[[str], List[Evidence]]] = None,
@@ -1116,7 +1217,8 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         self.session_store = (
             session_store if session_store is not None else InMemorySessionStore()
         )
-        self.use_gliner = use_gliner
+        self.context_ner_backend = _resolve_context_ner_backend(context_ner_backend, use_gliner)
+        self.use_gliner = self.context_ner_backend == "gliner"
         self.use_transformer = use_transformer
         self.use_llm = use_llm
         self.transformer_fn = transformer_fn
@@ -1132,7 +1234,8 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
         Process text through the privacy pipeline.
 
         Pipeline:
-            Detectors (adaptive: regex+spaCy for short text, regex+GLiNER for long text,
+            Detectors (adaptive: regex+spaCy for short text,
+            regex+GLiNER or regex+OpenAI privacy filter for long text,
             with org_list/LLM/transformer as configured)
             -> Evidence
             -> Canonical span resolver
@@ -1163,6 +1266,7 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
             known_orgs=known_orgs,
             spacy_model_name=self.spacy_model_name,
             use_gliner=self.use_gliner,
+            context_ner_backend=self.context_ner_backend,
             gliner_threshold=self.gliner_threshold,
             short_text_threshold=self.short_text_threshold,
             use_transformer=self.use_transformer,
@@ -1301,13 +1405,13 @@ class Taivium:  # pylint: disable=too-many-instance-attributes
 
 
 # Thread-safe cache for Taivium instances keyed by options
-_engine_cache: Dict[Tuple[bool, bool, str, int, Optional[float], Optional[str], int], Taivium] = {}
+_engine_cache: Dict[Tuple[bool, bool, str, int, Optional[float], str, Optional[str], int], Taivium] = {}
 _engine_cache_lock = threading.Lock()
 
 
 def _options_key(
     parsed_options: Dict[str, Any],
-) -> Tuple[bool, bool, str, int, Optional[float], Optional[str], int]:
+) -> Tuple[bool, bool, str, int, Optional[float], str, Optional[str], int]:
     # Only use options that affect instantiation, and make them hashable
     return (
         bool(parsed_options.get("use_transformer", False)),
@@ -1315,6 +1419,10 @@ def _options_key(
         _resolve_spacy_model_name(parsed_options),
         _resolve_short_text_threshold(parsed_options),
         _resolve_gliner_threshold(parsed_options),
+        _resolve_context_ner_backend(
+            cast(Optional[str], parsed_options.get("context_ner_backend")),
+            cast(Optional[bool], parsed_options.get("use_gliner", True)),
+        ),
         parsed_options.get("id_salt") or None,
         int(parsed_options.get("id_hash_len", 12)),
         # Do not include non-hashable objects like functions or custom classes

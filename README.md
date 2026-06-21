@@ -74,7 +74,8 @@ Your App ──► Taivium ──► LLM (OpenAI / Claude / local)
 Taivium routes detector execution by payload length to balance latency and context accuracy:
 
 - Fast Track (`len(text) < 100`): `regex_evidence` + `spacy_evidence`
-- Context Track (`len(text) >= 100`): `regex_evidence` + `gliner_evidence`
+- Context Track (`len(text) >= 100`): `regex_evidence` + context backend
+    (`gliner_evidence` or OpenAI privacy filter or others as configured)
 
 For long context payloads, `gliner_evidence` automatically chunks inputs larger
 than 384 tokens with overlap and runs chunk inference in batches, then remaps
@@ -82,6 +83,20 @@ entity spans back to original text offsets.
 
 This keeps short structured inputs on a lightweight path while reserving GLiNER for
 long narrative text where contextual entity resolution matters most.
+
+You can choose the long-text context backend with `context_ner_backend`:
+
+```python
+from taivium.engine import Taivium
+
+# Default long-text backend
+pipeline = Taivium(context_ner_backend="gliner")
+
+# Long-text OpenAI privacy filter backend (requires OPENAI_API_KEY)
+pipeline = Taivium(context_ner_backend="openai-privacy-filter")
+```
+
+Short-text routing remains spaCy in both configurations.
 
 For highly structured payloads (JSON, CSV, or dense key/value records), Taivium also
 applies a post-NER noise filter that suppresses short header-like PERSON/ORG/LOCATION

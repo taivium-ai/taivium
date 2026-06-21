@@ -1,12 +1,12 @@
 """
-Unit tests for taivium.transformer_gliner module, covering GLiNER evidence collection
+Unit tests for taivium.backend.transformer_gliner module, covering GLiNER evidence collection
 with chunking, batching, offset remapping, and exception handling.
 """
 
 import pytest
 import types
 import logging
-from taivium import transformer_gliner as gliner
+from taivium.backend import transformer_gliner as gliner
 
 
 class TestGlinerEvidence:
@@ -106,7 +106,7 @@ class TestGlinerEvidence:
         monkeypatch.setattr(get_gliner_model, "cache_clear", lambda: None)
         monkeypatch.setattr(gliner, "get_gliner_model", lambda: mock_model)
         
-        with caplog.at_level(logging.WARNING, logger="taivium.engine"):
+        with caplog.at_level(logging.WARNING, logger="taivium.backend.gliner"):
             result = gliner.gliner_evidence("test text")
         
         assert isinstance(result, list)
@@ -126,6 +126,30 @@ class TestGlinerEvidence:
         text = "I work for Apple Inc. and Microsoft Corporation."
         result = gliner.gliner_evidence(text, targets=["ORG"])
         assert isinstance(result, list)
+
+    def test_resolve_gliner_threshold_invalid_value_uses_default(self, caplog):
+        """Invalid threshold values should warn and fall back to default."""
+        with caplog.at_level(logging.WARNING, logger="taivium.backend.gliner"):
+            value = gliner._resolve_gliner_threshold("not-a-number")
+
+        assert value == gliner.DEFAULT_GLINER_THRESHOLD
+        assert any("Invalid GLiNER threshold" in msg for msg in caplog.messages)
+
+    def test_resolve_gliner_threshold_out_of_range_uses_default(self, caplog):
+        """Out-of-range thresholds should warn and fall back to default."""
+        with caplog.at_level(logging.WARNING, logger="taivium.backend.gliner"):
+            value = gliner._resolve_gliner_threshold(1.5)
+
+        assert value == gliner.DEFAULT_GLINER_THRESHOLD
+        assert any("Out-of-range GLiNER threshold" in msg for msg in caplog.messages)
+
+    def test_resolve_gliner_threshold_reads_env(self, monkeypatch):
+        """When threshold arg is None, env var should be used."""
+        monkeypatch.setenv("TAIVIUM_GLINER_THRESHOLD", "0.62")
+
+        value = gliner._resolve_gliner_threshold(None)
+
+        assert value == 0.62
 
     def test_chunk_text_for_gliner_shorter_than_max_tokens(self):
         """Text shorter than max token window should remain a single chunk."""
@@ -522,7 +546,7 @@ class TestGlinerEvidence:
             batch_predict_entities=working_batch,
         )
         
-        with caplog.at_level(logging.DEBUG, logger="taivium.engine"):
+        with caplog.at_level(logging.DEBUG, logger="taivium.backend.gliner"):
             chunks = [(0, "chunk1"), (10, "chunk2")]
             result = gliner._predict_gliner_chunks(mock_model, chunks, ["PERSON"], 0.55)
         
@@ -543,7 +567,7 @@ class TestGlinerEvidence:
             predict_entities=working_predict,
         )
         
-        with caplog.at_level(logging.DEBUG, logger="taivium.engine"):
+        with caplog.at_level(logging.DEBUG, logger="taivium.backend.gliner"):
             chunks = [(0, "chunk1"), (10, "chunk2")]
             result = gliner._predict_gliner_chunks(mock_model, chunks, ["PERSON"], 0.55)
         
@@ -581,7 +605,7 @@ class TestGlinerEvidence:
         
         monkeypatch.setattr(gliner, "get_gliner_model", failing_get_model)
         
-        with caplog.at_level(logging.WARNING, logger="taivium.engine"):
+        with caplog.at_level(logging.WARNING, logger="taivium.backend.gliner"):
             result = gliner.gliner_evidence("John Smith")
         
         assert result == []
@@ -872,7 +896,7 @@ class BrokenTokenizer:
 )
 def test_chunk_text_for_gliner_all_tokenizer_errors(error):
     tokenizer = BrokenTokenizer(error)
-    from taivium.transformer_gliner import _chunk_text_for_gliner
+    from taivium.backend.transformer_gliner import _chunk_text_for_gliner
     with pytest.raises(RuntimeError) as exc_info:
         _chunk_text_for_gliner("some text", tokenizer=tokenizer)
 
