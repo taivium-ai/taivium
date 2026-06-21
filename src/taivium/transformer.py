@@ -15,7 +15,8 @@ import warnings
 import logging
 from functools import lru_cache
 from typing import Any, List
-from .defs import Evidence, normalize_label
+from .defs import Evidence, normalize_label  # pylint: disable=import-outside-toplevel
+
 
 logger = logging.getLogger("taivium.transformer")
 
@@ -25,17 +26,7 @@ _LABEL_MAP = {
     "ORG": "ORG",
     "LOC": "LOCATION",
     "MISC": "UNKNOWN",  # too ambiguous for privacy use-cases; skipped
-    "private_person": "PERSON",
-    "account_number": "ORG",
-    "private_url": "LOCATION",
-    "private_email": "EMAIL",
-    "private_phone": "PHONE",
-    "private_address": "LOCATION",
-    "secret": "API",
-    "private_date": "DATE"   
 }
-
-# Labels that map directly without going through normalize_label.
 
 @lru_cache(maxsize=1)
 def _get_ner_pipeline() -> Any:
@@ -45,11 +36,12 @@ def _get_ner_pipeline() -> Any:
     cannot be loaded, so the evidence layer degrades gracefully.
     """
     try:
-        from huggingface_hub import snapshot_download
-        from openmed.mlx.inference import PrivacyFilterMLXPipeline
-        # Downloads the Apple Silicon optimized 8-bit model weights
-        model_path = snapshot_download("OpenMed/privacy-filter-multilingual-mlx-8bit")
-        return PrivacyFilterMLXPipeline(model_path)
+        from transformers import pipeline as hf_pipeline  # type: ignore[import]
+        return hf_pipeline(
+            "ner",  # type: ignore[arg-type]
+            model="dslim/bert-base-NER",
+            aggregation_strategy="simple",
+        )
     except (ModuleNotFoundError, ImportError, OSError, RuntimeError):
         warning_text = (
             "Transformer NER pipeline unavailable. "+
